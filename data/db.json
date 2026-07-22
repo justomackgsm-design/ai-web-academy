@@ -1,0 +1,38 @@
+{
+  "seasons": [
+    {
+      "id": "1",
+      "title": "Saison 1 : Coder entièrement avec l'IA",
+      "description": "Comment coder entièrement avec l'intelligence artificielle et même faire des intégrations d'APIs et des services de paiement sans écrire une seule ligne de code."
+    },
+    {
+      "id": "2",
+      "title": "Saison 2 : Hébergement & Git sans code",
+      "description": "Comment pousser le code dans GitHub comme un professionnel, l'héberger et comment modifier le code par la suite sans écrire une seule ligne de code."
+    },
+    {
+      "id": "3",
+      "title": "Saison 3 : Liaison Base de Données Neon",
+      "description": "Comment lier le front-end à la base de données relationnelle Neon et comment créer et configurer des tables de données sans aucune compétence technique préalable."
+    },
+    {
+      "id": "4",
+      "title": "Saison 4 : Déploiement Vercel Ultime",
+      "description": "Comment déployer votre application finale en production sur Vercel de façon ultra-rapide et professionnelle."
+    }
+  ],
+  "episodes": [],
+  "codes": [
+    {
+      "code": "PRO-DEMO-99",
+      "deviceLock": null,
+      "isPaid": false,
+      "createdAt": "2026-07-20T12:09:13.575Z",
+      "referralCode": "REF-U5G3-CFUO"
+    }
+  ],
+  "adminPassword": "19990001999",
+  "monerooSecretKey": "",
+  "monerooPublicKey": "",
+  "pendingPayments": []
+}

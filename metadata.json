@@ -1,0 +1,6 @@
+{
+  "name": "AI Web Academy",
+  "description": "Plateforme professionnelle de formation pour apprendre à créer des sites web facilement avec les intelligences artificielles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
