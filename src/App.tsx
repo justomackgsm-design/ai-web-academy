@@ -741,12 +741,19 @@ export default function App() {
   // Fetch Full Admin Data
   const fetchAdminData = async (password: string) => {
     setAdminError("");
+    const trimmedPass = password.trim();
     try {
       const res = await fetch("/api/admin/data", {
-        headers: { "x-admin-password": password }
+        headers: { "x-admin-password": trimmedPass }
       });
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        console.error("Erreur de décodage JSON:", jsonErr);
+      }
+
       if (res.ok) {
-        const data = await res.json();
         setAllCodes(data.codes || []);
         setAdminSeasons(data.seasons || []);
         setAdminEpisodes(data.episodes || []);
@@ -762,14 +769,13 @@ export default function App() {
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
 
         setIsAdminAuthenticated(true);
-        localStorage.setItem("ai_web_academy_admin_pass", password);
+        localStorage.setItem("ai_web_academy_admin_pass", trimmedPass);
       } else {
-        const data = await res.json();
-        setAdminError(data.error || "Accès administrateur rejeté.");
+        setAdminError(data.error || "Mot de passe administrateur incorrect.");
         localStorage.removeItem("ai_web_academy_admin_pass");
       }
     } catch (e) {
-      setAdminError("Erreur lors de la connexion au serveur d'administration.");
+      setAdminError("Erreur de communication avec le serveur d'administration.");
     }
   };
 

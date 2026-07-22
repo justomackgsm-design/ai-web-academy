@@ -531,13 +531,20 @@ const upload = multer({ storage });
 
 // Middleware to check Admin Access
 const checkAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const password = req.headers["x-admin-password"];
-  const db = await getDB();
-  const adminPassword = db.adminPassword || "19990001999";
-  if (password && (password === adminPassword || password === "19990001999")) {
-    next();
-  } else {
-    res.status(401).json({ error: "Mot de passe administrateur incorrect" });
+  try {
+    const rawHeader = req.headers["x-admin-password"];
+    const password = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader || "").toString().trim();
+    const db = await getDB();
+    const dbAdminPass = (db.adminPassword || "19990001999").toString().trim();
+    
+    if (password && (password === dbAdminPass || password === "19990001999")) {
+      next();
+    } else {
+      res.status(401).json({ error: "Mot de passe administrateur incorrect" });
+    }
+  } catch (err) {
+    console.error("Error in checkAdmin middleware:", err);
+    res.status(500).json({ error: "Erreur serveur lors de la vérification de l'administrateur" });
   }
 };
 
