@@ -118,7 +118,7 @@ const DEFAULT_DB: DBState = {
     { code: "PRO-DEMO-99", deviceLock: null, isPaid: false, createdAt: new Date().toISOString() }
   ],
   adminPassword: "admin",
-  monerooSecretKey: "",
+  monerooSecretKey: process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
   monerooPublicKey: "",
   telegramLink: "https://t.me/ai_academy_fit",
   whatsappLink: "https://wa.me/33600000000",
@@ -212,9 +212,12 @@ async function initPostgres() {
 
 // Helper to read and write database
 function readDB(): DBState {
+  const defaultMonerooKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
   if (dbCache) {
-    // Return the cached database structure directly
     dbCache.seasons = DEFAULT_SEASONS;
+    if (!dbCache.monerooSecretKey) {
+      dbCache.monerooSecretKey = defaultMonerooKey;
+    }
     return dbCache;
   }
   try {
@@ -229,6 +232,9 @@ function readDB(): DBState {
     
     // Always keep seasons up-to-date with code changes
     db.seasons = DEFAULT_SEASONS;
+    if (!db.monerooSecretKey) {
+      db.monerooSecretKey = defaultMonerooKey;
+    }
 
     // Migrate: Ensure every code has a referralCode
     let modified = false;
@@ -534,15 +540,16 @@ async function startServer() {
     writeDB(db);
 
     try {
-      const response = await fetch("https://api.moneroo.co/v1/payments", {
+      const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
+          "Authorization": `Bearer ${apiKey}`,
+          "Accept": "application/json"
         },
         body: JSON.stringify({
-          amount: 50,
-          currency: "USD",
+          amount: 30000,
+          currency: "XOF",
           description: `Formation Ultime IA - ${firstName.trim()} ${lastName.trim()}`,
           customer: {
             first_name: firstName.trim(),
@@ -550,7 +557,6 @@ async function startServer() {
             email: email.trim().toLowerCase()
           },
           return_url: returnUrl,
-          cancel_url: cancelUrl,
           metadata: {
             paymentId: paymentId
           }
@@ -578,16 +584,11 @@ async function startServer() {
         }
       }
 
-      const checkoutUrl = data.checkout_url || 
+      const checkoutUrl = (data.data && data.data.checkout_url) ||
+                          data.checkout_url || 
                           data.payment_url || 
                           data.redirect_url || 
-                          data.url ||
-                          (data.data && (
-                            data.data.checkout_url || 
-                            data.data.payment_url || 
-                            data.data.redirect_url || 
-                            data.data.url
-                          ));
+                          data.url;
 
       if (!checkoutUrl) {
         return res.status(500).json({
@@ -649,10 +650,10 @@ async function startServer() {
 
     if (apiKey && payment.monerooId) {
       try {
-        const response = await fetch(`https://api.moneroo.co/v1/payments/${payment.monerooId}`, {
+        const response = await fetch(`https://api.moneroo.io/v1/payments/${payment.monerooId}`, {
           headers: {
             "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json"
+            "Accept": "application/json"
           }
         });
         if (response.ok) {
