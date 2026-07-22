@@ -129,7 +129,8 @@ const DEFAULT_DB: DBState = {
 };
 
 // PostgreSQL Integration Pool Setup
-const dbUrl = process.env.DATABASE_URL;
+const DEFAULT_DATABASE_URL = "postgresql://neondb_owner:npg_SEOhoeypW18M@ep-green-grass-auiv7uwj.c-10.us-east-1.aws.neon.tech/neondb?sslmode=require";
+const dbUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
 let pool: Pool | null = null;
 let dbCache: DBState | null = null;
 
@@ -274,24 +275,27 @@ function readDB(): DBState {
   }
 }
 
-function writeDB(state: DBState) {
+async function writeDB(state: DBState) {
   dbCache = state;
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), "utf8");
+    if (fs.existsSync(DATA_DIR)) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), "utf8");
+    }
   } catch (err) {
-    console.error("Error writing to database file:", err);
+    console.error("Error writing to local database file (ignoring on read-only serverless):", err);
   }
 
-  // Asynchronously synchronize state to Neon Postgres in background
+  // Synchronize state to Neon Postgres
   if (pool) {
     const jsonStr = JSON.stringify(state);
-    pool.query(`
-      UPDATE app_state SET data = $1, updated_at = NOW() WHERE id = (SELECT id FROM app_state ORDER BY id ASC LIMIT 1)
-    `).then(() => {
+    try {
+      await pool.query(`
+        UPDATE app_state SET data = $1, updated_at = NOW() WHERE id = (SELECT id FROM app_state ORDER BY id ASC LIMIT 1)
+      `, [jsonStr]);
       console.log("Successfully persisted state to Neon PostgreSQL.");
-    }).catch(err => {
+    } catch (err) {
       console.error("Failed to sync state to Neon PostgreSQL:", err);
-    });
+    }
   }
 }
 
@@ -318,12 +322,21 @@ async function uploadToBlobIfNeeded(file: any): Promise<string> {
   return file.filename;
 }
 
+export const app = express();
+
+app.use(express.json());
+
+// Ensure Neon PostgreSQL is loaded on serverless cold start
+app.use(async (req, res, next) => {
+  if (!dbCache && pool) {
+    await initPostgres();
+  }
+  next();
+});
+
 async function startServer() {
   await initPostgres();
-  const app = express();
   const PORT = 3000;
-
-  app.use(express.json());
 
   // Setup multer for local file uploads
   const storage = multer.diskStorage({
@@ -1436,3 +1449,5 @@ async function startServer() {
 }
 
 startServer();
+
+export default app;
