@@ -18,12 +18,16 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
-// Ensure directories exist
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+// Ensure directories exist safely (avoiding read-only filesystem crashes on Vercel)
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  }
+} catch (err) {
+  // Ignore filesystem creation errors on read-only serverless platforms
 }
 
 interface Episode {
@@ -200,8 +204,14 @@ async function initPostgres() {
     if (res.rows.length > 0) {
       console.log("Successfully connected and loaded state from Neon PostgreSQL.");
       dbCache = JSON.parse(res.rows[0].data);
-      // Synchronize with local file for offline fallback consistency
-      fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2), "utf8");
+      // Synchronize with local file for offline fallback consistency if filesystem is writable
+      try {
+        if (fs.existsSync(DATA_DIR)) {
+          fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2), "utf8");
+        }
+      } catch (e) {
+        // Ignore read-only filesystem on serverless
+      }
     } else {
       console.log("Initializing empty Neon PostgreSQL database with seed state...");
       const initialJson = JSON.stringify(DEFAULT_DB);
@@ -230,8 +240,10 @@ function readDB(): DBState {
   try {
     let db: DBState;
     if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2), "utf8");
       db = JSON.parse(JSON.stringify(DEFAULT_DB));
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2), "utf8");
+      } catch (e) {}
     } else {
       const data = fs.readFileSync(DB_FILE, "utf8");
       db = JSON.parse(data);
@@ -264,7 +276,9 @@ function readDB(): DBState {
     }
 
     if (modified) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
+      } catch (e) {}
     }
     
     dbCache = db;
