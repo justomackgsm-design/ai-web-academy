@@ -1443,9 +1443,6 @@ export default function App() {
                   <p className="text-xs text-slate-500 mt-1">
                     Veuillez renseigner le mot de passe maître de l'académie pour déverrouiller.
                   </p>
-                  <div className="mt-3 inline-block bg-amber-50 border border-amber-200 px-3 py-1 rounded text-[11px] font-mono text-amber-700">
-                    Code requis : <span className="font-bold underline">19990001999</span>
-                  </div>
                 </div>
 
                 <form onSubmit={handleAdminAuth} className="space-y-4">

@@ -374,6 +374,20 @@ async function syncToRelationalTables(state: DBState) {
   }
 }
 
+async function getDB(): Promise<DBState> {
+  if (pool && !dbCache) {
+    try {
+      const res = await pool.query(`SELECT data FROM app_state ORDER BY id ASC LIMIT 1`);
+      if (res.rows.length > 0) {
+        dbCache = JSON.parse(res.rows[0].data);
+      }
+    } catch (err) {
+      console.error("Error loading state from Neon Postgres in getDB():", err);
+    }
+  }
+  return readDB();
+}
+
 function readDB(): DBState {
   const defaultMonerooKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
   const defaultExchangeRateKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
@@ -516,11 +530,11 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Middleware to check Admin Access
-const checkAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const checkAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const password = req.headers["x-admin-password"];
-  const db = readDB();
+  const db = await getDB();
   const adminPassword = db.adminPassword || "19990001999";
-  if (password === adminPassword || password === "19990001999") {
+  if (password && (password === adminPassword || password === "19990001999")) {
     next();
   } else {
     res.status(401).json({ error: "Mot de passe administrateur incorrect" });
@@ -528,8 +542,8 @@ const checkAdmin = (req: express.Request, res: express.Response, next: express.N
 };
 
 // Helper to verify code with a deviceId
-const isCodeValid = (code: string, deviceId: string): { valid: boolean; error?: string } => {
-  const db = readDB();
+const isCodeValid = async (code: string, deviceId: string): Promise<{ valid: boolean; error?: string }> => {
+  const db = await getDB();
   const foundCode = db.codes.find((c) => c.code === code);
   if (!foundCode) {
     return { valid: false, error: "Code d'accès invalide ou inexistant." };
@@ -544,8 +558,8 @@ const isCodeValid = (code: string, deviceId: string): { valid: boolean; error?: 
 const apiRouter = express.Router();
 
 // GET Public Info
-apiRouter.get("/public-state", (req, res) => {
-  const db = readDB();
+apiRouter.get("/public-state", async (req, res) => {
+  const db = await getDB();
   const publicEpisodes = db.episodes.map(ep => ({
     id: ep.id,
     seasonId: ep.seasonId,
@@ -572,7 +586,7 @@ apiRouter.post("/verify-code", async (req, res) => {
     return res.status(400).json({ error: "Code et identifiant d'appareil requis." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   const codeIndex = db.codes.findIndex((c) => c.code.trim().toUpperCase() === code.trim().toUpperCase());
 
   if (codeIndex === -1) {
@@ -623,7 +637,7 @@ apiRouter.post("/buy-code", async (req, res) => {
     return res.status(400).json({ error: "Le nom, le prénom et l'adresse email sont obligatoires." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   
   const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let newCode = "IA-";
@@ -689,7 +703,7 @@ apiRouter.post("/payments/create-session", async (req, res) => {
     return res.status(400).json({ error: "Le prénom, le nom et l'adresse email sont obligatoires." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   const apiKey = db.monerooSecretKey;
   if (!apiKey) {
     return res.status(400).json({ error: "La clé API de paiement Moneroo n'est pas encore configurée par l'administrateur de l'Académie." });
@@ -776,7 +790,7 @@ apiRouter.post("/payments/create-session", async (req, res) => {
 
     const monerooId = data.id || (data.data && data.data.id) || "";
     if (monerooId) {
-      const dbCurrent = readDB();
+      const dbCurrent = await getDB();
       if (dbCurrent.pendingPayments) {
         const idx = dbCurrent.pendingPayments.findIndex(p => p.id === paymentId);
         if (idx !== -1) {
@@ -817,7 +831,7 @@ apiRouter.post("/payments/verify", async (req, res) => {
     return res.status(400).json({ error: "ID de paiement manquant." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   if (!db.pendingPayments) db.pendingPayments = [];
   const paymentIdx = db.pendingPayments.findIndex(p => p.id === paymentId);
   if (paymentIdx === -1) {
@@ -956,7 +970,7 @@ apiRouter.post("/payments/webhook", async (req, res) => {
     return res.status(400).send("No identifier found.");
   }
 
-  const db = readDB();
+  const db = await getDB();
   if (!db.pendingPayments) db.pendingPayments = [];
 
   const idx = db.pendingPayments.findIndex(p => p.id === paymentId || p.monerooId === monerooId);
@@ -1028,7 +1042,7 @@ apiRouter.post("/payments/webhook", async (req, res) => {
 // Admin Update Settings
 apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
   const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath } = req.body;
-  const db = readDB();
+  const db = await getDB();
   db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
   db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
   if (exchangeRateApiKey !== undefined) db.exchangeRateApiKey = exchangeRateApiKey.trim();
@@ -1041,13 +1055,13 @@ apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
 });
 
 // Get Profile details
-apiRouter.post("/profile", (req, res) => {
+apiRouter.post("/profile", async (req, res) => {
   const { code, deviceId } = req.body;
   if (!code || !deviceId) {
     return res.status(400).json({ error: "Code et identifiant d'appareil requis." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   const foundCode = db.codes.find(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
 
   if (!foundCode) {
@@ -1081,7 +1095,7 @@ apiRouter.post("/update-usdt-address", async (req, res) => {
     return res.status(400).json({ error: "Code, identifiant d'appareil et adresse USDT requis." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   const codeIndex = db.codes.findIndex(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
 
   if (codeIndex === -1) {
@@ -1111,7 +1125,7 @@ apiRouter.post("/request-withdrawal", async (req, res) => {
     return res.status(400).json({ error: "Tous les champs sont requis pour la demande de retrait." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   const codeIndex = db.codes.findIndex(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
 
   if (codeIndex === -1) {
@@ -1162,8 +1176,8 @@ apiRouter.post("/request-withdrawal", async (req, res) => {
 });
 
 // Admin Data
-apiRouter.get("/admin/data", checkAdmin, (req, res) => {
-  const db = readDB();
+apiRouter.get("/admin/data", checkAdmin, async (req, res) => {
+  const db = await getDB();
   res.json({
     codes: db.codes,
     seasons: db.seasons,
@@ -1185,7 +1199,7 @@ apiRouter.post("/admin/change-password", checkAdmin, async (req, res) => {
   if (!newPassword || newPassword.trim().length < 4) {
     return res.status(400).json({ error: "Le mot de passe doit contenir au moins 4 caractères." });
   }
-  const db = readDB();
+  const db = await getDB();
   db.adminPassword = newPassword;
   await writeDB(db);
   res.json({ success: true, message: "Mot de passe administrateur mis à jour." });
@@ -1194,7 +1208,7 @@ apiRouter.post("/admin/change-password", checkAdmin, async (req, res) => {
 // Admin Generate Access Code
 apiRouter.post("/admin/generate-code", checkAdmin, async (req, res) => {
   const { firstName, lastName, email } = req.body;
-  const db = readDB();
+  const db = await getDB();
 
   const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let newAccessCode = "IA-";
@@ -1231,7 +1245,7 @@ apiRouter.post("/admin/generate-code", checkAdmin, async (req, res) => {
 // Admin Delete Code
 apiRouter.delete("/admin/codes/:code", checkAdmin, async (req, res) => {
   const { code } = req.params;
-  const db = readDB();
+  const db = await getDB();
   db.codes = db.codes.filter(c => c.code !== code);
   await writeDB(db);
   res.json({ success: true, message: "Code d'accès supprimé." });
@@ -1240,7 +1254,7 @@ apiRouter.delete("/admin/codes/:code", checkAdmin, async (req, res) => {
 // Admin Reset Device Lock
 apiRouter.post("/admin/codes/:code/reset", checkAdmin, async (req, res) => {
   const { code } = req.params;
-  const db = readDB();
+  const db = await getDB();
   const idx = db.codes.findIndex(c => c.code === code);
   if (idx !== -1) {
     db.codes[idx].deviceLock = null;
@@ -1254,7 +1268,7 @@ apiRouter.post("/admin/codes/:code/reset", checkAdmin, async (req, res) => {
 apiRouter.post("/admin/codes/:code/update-profile", checkAdmin, async (req, res) => {
   const { code } = req.params;
   const { firstName, lastName, email, referralBalance, usdtAddress } = req.body;
-  const db = readDB();
+  const db = await getDB();
   const idx = db.codes.findIndex(c => c.code === code);
   if (idx !== -1) {
     db.codes[idx].firstName = firstName;
@@ -1271,7 +1285,7 @@ apiRouter.post("/admin/codes/:code/update-profile", checkAdmin, async (req, res)
 // Admin Mark Withdrawal Completed
 apiRouter.post("/admin/codes/:code/withdrawals/:wdrId/complete", checkAdmin, async (req, res) => {
   const { code, wdrId } = req.params;
-  const db = readDB();
+  const db = await getDB();
   const idx = db.codes.findIndex(c => c.code === code);
   if (idx !== -1) {
     const withdrawals = db.codes[idx].withdrawals || [];
@@ -1289,7 +1303,7 @@ apiRouter.post("/admin/codes/:code/withdrawals/:wdrId/complete", checkAdmin, asy
 // Admin Cancel Withdrawal and Refund Balance
 apiRouter.post("/admin/codes/:code/withdrawals/:wdrId/cancel", checkAdmin, async (req, res) => {
   const { code, wdrId } = req.params;
-  const db = readDB();
+  const db = await getDB();
   const idx = db.codes.findIndex(c => c.code === code);
   if (idx !== -1) {
     const withdrawals = db.codes[idx].withdrawals || [];
@@ -1311,7 +1325,7 @@ apiRouter.post("/admin/seasons", checkAdmin, async (req, res) => {
   if (!title || !description) {
     return res.status(400).json({ error: "Titre et description requis." });
   }
-  const db = readDB();
+  const db = await getDB();
   if (id) {
     const idx = db.seasons.findIndex(s => s.id === id);
     if (idx !== -1) {
@@ -1330,7 +1344,7 @@ apiRouter.post("/admin/seasons", checkAdmin, async (req, res) => {
 // Admin Delete Season
 apiRouter.delete("/admin/seasons/:id", checkAdmin, async (req, res) => {
   const { id } = req.params;
-  const db = readDB();
+  const db = await getDB();
   db.seasons = db.seasons.filter(s => s.id !== id);
   db.episodes = db.episodes.filter(ep => ep.seasonId !== id);
   await writeDB(db);
@@ -1358,7 +1372,7 @@ apiRouter.post("/admin/episodes", checkAdmin, upload.single("videoFile"), async 
     return res.status(400).json({ error: "Veuillez uploader un fichier vidéo ou fournir une URL." });
   }
 
-  const db = readDB();
+  const db = await getDB();
   const newEpisode: Episode = {
     id: String(Date.now()),
     seasonId,
@@ -1379,7 +1393,7 @@ apiRouter.post("/admin/episodes", checkAdmin, upload.single("videoFile"), async 
 // Admin Delete Episode
 apiRouter.delete("/admin/episodes/:id", checkAdmin, async (req, res) => {
   const { id } = req.params;
-  const db = readDB();
+  const db = await getDB();
   const episode = db.episodes.find(ep => ep.id === id);
   if (episode) {
     const filePath = path.join(UPLOADS_DIR, episode.videoPath);
@@ -1404,7 +1418,7 @@ apiRouter.post("/admin/presentation-video", checkAdmin, upload.single("videoFile
   }
   try {
     const finalVideoPath = await uploadToBlobIfNeeded(req.file);
-    const db = readDB();
+    const db = await getDB();
     db.presentationVideoPath = finalVideoPath;
     await writeDB(db);
     res.json({ success: true, presentationVideoPath: finalVideoPath });
@@ -1415,10 +1429,10 @@ apiRouter.post("/admin/presentation-video", checkAdmin, upload.single("videoFile
 });
 
 // Public stream for presentation video
-apiRouter.get("/public-video/:filename", (req, res) => {
+apiRouter.get("/public-video/:filename", async (req, res) => {
   const { filename } = req.params;
   
-  const db = readDB();
+  const db = await getDB();
   if (db.presentationVideoPath !== filename) {
     return res.status(403).send("Accès refusé. Cette vidéo n'est pas configurée comme vidéo de présentation.");
   }
@@ -1471,7 +1485,7 @@ apiRouter.get("/videos/proxy", async (req, res) => {
     return res.status(401).json({ error: "Paramètres manquants pour lire la vidéo." });
   }
 
-  const verification = isCodeValid(code as string, deviceId as string);
+  const verification = await isCodeValid(code as string, deviceId as string);
   if (!verification.valid) {
     return res.status(403).json({ error: verification.error });
   }
@@ -1510,7 +1524,7 @@ apiRouter.get("/videos/proxy", async (req, res) => {
 });
 
 // Stream Local Video
-apiRouter.get("/videos/:filename", (req, res) => {
+apiRouter.get("/videos/:filename", async (req, res) => {
   const { filename } = req.params;
   const { code, deviceId } = req.query;
 
@@ -1518,7 +1532,7 @@ apiRouter.get("/videos/:filename", (req, res) => {
     return res.status(401).json({ error: "Veuillez fournir votre code d'accès et identifiant pour lire la vidéo." });
   }
 
-  const verification = isCodeValid(code as string, deviceId as string);
+  const verification = await isCodeValid(code as string, deviceId as string);
   if (!verification.valid) {
     return res.status(403).json({ error: verification.error });
   }
