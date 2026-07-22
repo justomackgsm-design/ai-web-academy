@@ -27,12 +27,33 @@
       "code": "PRO-DEMO-99",
       "deviceLock": null,
       "isPaid": false,
-      "createdAt": "2026-07-20T12:09:13.575Z",
-      "referralCode": "REF-U5G3-CFUO"
+      "createdAt": "2026-07-22T08:54:51.946Z"
     }
   ],
-  "adminPassword": "19990001999",
-  "monerooSecretKey": "",
+  "adminPassword": "admin",
+  "monerooSecretKey": "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
   "monerooPublicKey": "",
-  "pendingPayments": []
+  "telegramLink": "https://t.me/ai_academy_fit",
+  "whatsappLink": "https://wa.me/33600000000",
+  "presentationVideoUrl": "https://www.youtube.com/embed/8m9g_b95Eto",
+  "pendingPayments": [
+    {
+      "id": "pay-1784711412206-C0LYWM",
+      "firstName": "Ety",
+      "lastName": "Hgbj",
+      "email": "kpetekoussojuste1@gmail.com",
+      "status": "pending",
+      "createdAt": "2026-07-22T09:10:12.206Z",
+      "monerooId": "py_pwp9wj1ij3af"
+    },
+    {
+      "id": "pay-1784711412955-XBNHH3",
+      "firstName": "Ety",
+      "lastName": "Hgbj",
+      "email": "kpetekoussojuste1@gmail.com",
+      "status": "pending",
+      "createdAt": "2026-07-22T09:10:12.955Z",
+      "monerooId": "py_noefbecym47z"
+    }
+  ]
 }

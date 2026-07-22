@@ -71,6 +71,7 @@ interface DBState {
   adminPassword?: string;
   monerooSecretKey?: string;
   monerooPublicKey?: string;
+  exchangeRateApiKey?: string;
   telegramLink?: string;
   whatsappLink?: string;
   presentationVideoUrl?: string;
@@ -120,6 +121,7 @@ const DEFAULT_DB: DBState = {
   adminPassword: "admin",
   monerooSecretKey: process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
   monerooPublicKey: "",
+  exchangeRateApiKey: process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba",
   telegramLink: "https://t.me/ai_academy_fit",
   whatsappLink: "https://wa.me/33600000000",
   presentationVideoUrl: "https://www.youtube.com/embed/8m9g_b95Eto",
@@ -213,10 +215,14 @@ async function initPostgres() {
 // Helper to read and write database
 function readDB(): DBState {
   const defaultMonerooKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
+  const defaultExchangeRateKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
   if (dbCache) {
     dbCache.seasons = DEFAULT_SEASONS;
     if (!dbCache.monerooSecretKey) {
       dbCache.monerooSecretKey = defaultMonerooKey;
+    }
+    if (!dbCache.exchangeRateApiKey) {
+      dbCache.exchangeRateApiKey = defaultExchangeRateKey;
     }
     return dbCache;
   }
@@ -234,6 +240,9 @@ function readDB(): DBState {
     db.seasons = DEFAULT_SEASONS;
     if (!db.monerooSecretKey) {
       db.monerooSecretKey = defaultMonerooKey;
+    }
+    if (!db.exchangeRateApiKey) {
+      db.exchangeRateApiKey = defaultExchangeRateKey;
     }
 
     // Migrate: Ensure every code has a referralCode
@@ -539,6 +548,26 @@ async function startServer() {
     db.pendingPayments.push(newPendingPayment);
     writeDB(db);
 
+    // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API
+    let xofAmount = 28750; // default fallback ($50 * ~575)
+    const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+    if (rateApiKey) {
+      try {
+        const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/50`);
+        if (rateRes.ok) {
+          const rateData: any = await rateRes.json();
+          if (rateData && rateData.conversion_result) {
+            xofAmount = Math.round(rateData.conversion_result);
+            console.log(`Converted $50 USD -> ${xofAmount} XOF (Rate: ${rateData.conversion_rate})`);
+          }
+        } else {
+          console.warn("ExchangeRate API response not OK, using default conversion:", rateRes.status);
+        }
+      } catch (err) {
+        console.error("ExchangeRate API conversion error, using fallback XOF amount:", err);
+      }
+    }
+
     try {
       const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
         method: "POST",
@@ -548,7 +577,7 @@ async function startServer() {
           "Accept": "application/json"
         },
         body: JSON.stringify({
-          amount: 30000,
+          amount: xofAmount,
           currency: "XOF",
           description: `Formation Ultime IA - ${firstName.trim()} ${lastName.trim()}`,
           customer: {
@@ -825,10 +854,11 @@ async function startServer() {
 
   // API: Admin Update Settings
   app.post("/api/admin/settings", checkAdmin, (req, res) => {
-    const { monerooSecretKey, monerooPublicKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath } = req.body;
+    const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath } = req.body;
     const db = readDB();
     db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
     db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
+    if (exchangeRateApiKey !== undefined) db.exchangeRateApiKey = exchangeRateApiKey.trim();
     db.telegramLink = telegramLink ? telegramLink.trim() : "";
     db.whatsappLink = whatsappLink ? whatsappLink.trim() : "";
     db.presentationVideoUrl = presentationVideoUrl ? presentationVideoUrl.trim() : "";
