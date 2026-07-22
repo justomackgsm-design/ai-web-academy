@@ -149,33 +149,228 @@ async function initPostgres() {
     return;
   }
   try {
+    // 1. Create all relational tables in Neon PostgreSQL
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS seasons (
+        id VARCHAR(255) PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS episodes (
+        id VARCHAR(255) PRIMARY KEY,
+        season_id VARCHAR(255) NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        video_path TEXT NOT NULL,
+        original_name TEXT,
+        duration VARCHAR(100),
+        created_at VARCHAR(100)
+      );
+
+      CREATE TABLE IF NOT EXISTS access_codes (
+        code VARCHAR(255) PRIMARY KEY,
+        referral_code VARCHAR(255),
+        device_lock VARCHAR(255),
+        is_paid BOOLEAN DEFAULT TRUE,
+        created_at VARCHAR(100),
+        first_name TEXT,
+        last_name TEXT,
+        email TEXT,
+        referral_balance NUMERIC(12, 2) DEFAULT 0,
+        referred_by TEXT,
+        usdt_address TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS withdrawals (
+        id VARCHAR(255) PRIMARY KEY,
+        code VARCHAR(255) REFERENCES access_codes(code) ON DELETE CASCADE,
+        amount NUMERIC(12, 2) NOT NULL,
+        usdt_address TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at VARCHAR(100)
+      );
+
+      CREATE TABLE IF NOT EXISTS pending_payments (
+        id VARCHAR(255) PRIMARY KEY,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        referred_by TEXT,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at VARCHAR(100),
+        moneroo_id TEXT,
+        generated_code TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_settings (
+        id INT PRIMARY KEY DEFAULT 1,
+        admin_password TEXT,
+        moneroo_secret_key TEXT,
+        moneroo_public_key TEXT,
+        exchange_rate_api_key TEXT,
+        telegram_link TEXT,
+        whatsapp_link TEXT,
+        presentation_video_url TEXT,
+        presentation_video_path TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS app_state (
         id SERIAL PRIMARY KEY,
         data TEXT NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    
+    console.log("All Neon PostgreSQL database tables verified/created successfully.");
+
+    // Check if app_state or access_codes already has data
     const res = await pool.query(`SELECT data FROM app_state ORDER BY id ASC LIMIT 1`);
     if (res.rows.length > 0) {
       console.log("Successfully connected and loaded state from Neon PostgreSQL.");
       dbCache = JSON.parse(res.rows[0].data);
+    } else {
+      console.log("Initializing empty Neon PostgreSQL database with seed state...");
+      dbCache = JSON.parse(JSON.stringify(DEFAULT_DB));
+      const initialJson = JSON.stringify(DEFAULT_DB);
+      await pool.query(`INSERT INTO app_state (data) VALUES ($1)`, [initialJson]);
+    }
+
+    // Sync state to all relational tables so they are fully populated in Neon
+    if (dbCache) {
+      await syncToRelationalTables(dbCache);
       try {
         if (fs.existsSync(DATA_DIR)) {
           fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2), "utf8");
         }
-      } catch (e) {
-        // Ignore read-only filesystem on serverless
-      }
-    } else {
-      console.log("Initializing empty Neon PostgreSQL database with seed state...");
-      const initialJson = JSON.stringify(DEFAULT_DB);
-      await pool.query(`INSERT INTO app_state (data) VALUES ($1)`, [initialJson]);
-      dbCache = JSON.parse(JSON.stringify(DEFAULT_DB));
+      } catch (e) {}
     }
+
   } catch (err) {
     console.error("PostgreSQL connection/init error:", err);
+  }
+}
+
+// Helper to sync state to all individual relational tables
+async function syncToRelationalTables(state: DBState) {
+  if (!pool) return;
+  try {
+    // 1. Admin Settings
+    await pool.query(`
+      INSERT INTO admin_settings (id, admin_password, moneroo_secret_key, moneroo_public_key, exchange_rate_api_key, telegram_link, whatsapp_link, presentation_video_url, presentation_video_path)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (id) DO UPDATE SET
+        admin_password = EXCLUDED.admin_password,
+        moneroo_secret_key = EXCLUDED.moneroo_secret_key,
+        moneroo_public_key = EXCLUDED.moneroo_public_key,
+        exchange_rate_api_key = EXCLUDED.exchange_rate_api_key,
+        telegram_link = EXCLUDED.telegram_link,
+        whatsapp_link = EXCLUDED.whatsapp_link,
+        presentation_video_url = EXCLUDED.presentation_video_url,
+        presentation_video_path = EXCLUDED.presentation_video_path;
+    `, [
+      state.adminPassword || "19990001999",
+      state.monerooSecretKey || "",
+      state.monerooPublicKey || "",
+      state.exchangeRateApiKey || "",
+      state.telegramLink || "",
+      state.whatsappLink || "",
+      state.presentationVideoUrl || "",
+      state.presentationVideoPath || ""
+    ]);
+
+    // 2. Seasons
+    for (const season of state.seasons || []) {
+      await pool.query(`
+        INSERT INTO seasons (id, title, description)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (id) DO UPDATE SET
+          title = EXCLUDED.title,
+          description = EXCLUDED.description;
+      `, [season.id, season.title, season.description]);
+    }
+
+    // 3. Episodes
+    for (const ep of state.episodes || []) {
+      await pool.query(`
+        INSERT INTO episodes (id, season_id, title, description, video_path, original_name, duration, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (id) DO UPDATE SET
+          season_id = EXCLUDED.season_id,
+          title = EXCLUDED.title,
+          description = EXCLUDED.description,
+          video_path = EXCLUDED.video_path,
+          original_name = EXCLUDED.original_name,
+          duration = EXCLUDED.duration,
+          created_at = EXCLUDED.created_at;
+      `, [ep.id, ep.seasonId, ep.title, ep.description || "", ep.videoPath, ep.originalName || "", ep.duration || "", ep.createdAt || new Date().toISOString()]);
+    }
+
+    // 4. Access Codes & Withdrawals
+    for (const codeObj of state.codes || []) {
+      await pool.query(`
+        INSERT INTO access_codes (code, referral_code, device_lock, is_paid, created_at, first_name, last_name, email, referral_balance, referred_by, usdt_address)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (code) DO UPDATE SET
+          referral_code = EXCLUDED.referral_code,
+          device_lock = EXCLUDED.device_lock,
+          is_paid = EXCLUDED.is_paid,
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          email = EXCLUDED.email,
+          referral_balance = EXCLUDED.referral_balance,
+          referred_by = EXCLUDED.referred_by,
+          usdt_address = EXCLUDED.usdt_address;
+      `, [
+        codeObj.code,
+        codeObj.referralCode || "",
+        codeObj.deviceLock || null,
+        codeObj.isPaid ?? true,
+        codeObj.createdAt || new Date().toISOString(),
+        codeObj.firstName || "",
+        codeObj.lastName || "",
+        codeObj.email || "",
+        codeObj.referralBalance || 0,
+        codeObj.referredBy || null,
+        codeObj.usdtAddress || ""
+      ]);
+
+      if (codeObj.withdrawals && Array.isArray(codeObj.withdrawals)) {
+        for (const w of codeObj.withdrawals) {
+          await pool.query(`
+            INSERT INTO withdrawals (id, code, amount, usdt_address, status, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (id) DO UPDATE SET
+              amount = EXCLUDED.amount,
+              usdt_address = EXCLUDED.usdt_address,
+              status = EXCLUDED.status;
+          `, [w.id, codeObj.code, w.amount, w.usdtAddress, w.status, w.createdAt || new Date().toISOString()]);
+        }
+      }
+    }
+
+    // 5. Pending Payments
+    for (const p of state.pendingPayments || []) {
+      await pool.query(`
+        INSERT INTO pending_payments (id, first_name, last_name, email, referred_by, status, created_at, moneroo_id, generated_code)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status,
+          moneroo_id = EXCLUDED.moneroo_id,
+          generated_code = EXCLUDED.generated_code;
+      `, [
+        p.id,
+        p.firstName,
+        p.lastName,
+        p.email,
+        p.referredBy || null,
+        p.status,
+        p.createdAt || new Date().toISOString(),
+        p.monerooId || "",
+        p.generatedCode || ""
+      ]);
+    }
+  } catch (err) {
+    console.error("Error syncing to relational tables:", err);
   }
 }
 
@@ -254,14 +449,15 @@ async function writeDB(state: DBState): Promise<void> {
     console.error("Error writing to local database file (ignoring on read-only serverless):", err);
   }
 
-  // Synchronize state to Neon Postgres
+  // Synchronize state to Neon Postgres (both app_state table and individual relational tables)
   if (pool) {
     const jsonStr = JSON.stringify(state);
     try {
       await pool.query(`
         UPDATE app_state SET data = $1, updated_at = NOW() WHERE id = (SELECT id FROM app_state ORDER BY id ASC LIMIT 1)
       `, [jsonStr]);
-      console.log("Successfully persisted state to Neon PostgreSQL.");
+      await syncToRelationalTables(state);
+      console.log("Successfully persisted state to Neon PostgreSQL relational tables.");
     } catch (err) {
       console.error("Failed to sync state to Neon PostgreSQL:", err);
     }
