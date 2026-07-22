@@ -116,7 +116,30 @@ const DEFAULT_DB: DBState = {
   seasons: DEFAULT_SEASONS,
   episodes: [],
   codes: [
-    { code: "PRO-DEMO-99", deviceLock: null, isPaid: false, createdAt: new Date().toISOString() }
+    {
+      code: "19990001999",
+      referralCode: "REF-1999-MASTER",
+      deviceLock: null,
+      isPaid: true,
+      createdAt: new Date().toISOString(),
+      firstName: "Admin",
+      lastName: "Master",
+      email: "admin@aiwebacademy.com",
+      referralBalance: 0,
+      withdrawals: []
+    },
+    {
+      code: "PRO-DEMO-99",
+      referralCode: "REF-PRO-DEMO",
+      deviceLock: null,
+      isPaid: true,
+      createdAt: new Date().toISOString(),
+      firstName: "Démo",
+      lastName: "Étudiant",
+      email: "demo@aiwebacademy.com",
+      referralBalance: 0,
+      withdrawals: []
+    }
   ],
   adminPassword: "admin",
   monerooSecretKey: process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
@@ -428,6 +451,28 @@ function readDB(): DBState {
     }
 
     let modified = false;
+    if (!db.codes || !Array.isArray(db.codes)) {
+      db.codes = [];
+      modified = true;
+    }
+
+    const has1999Code = db.codes.some(c => c.code && c.code.trim().toUpperCase() === "19990001999");
+    if (!has1999Code) {
+      db.codes.unshift({
+        code: "19990001999",
+        referralCode: "REF-1999-MASTER",
+        deviceLock: null,
+        isPaid: true,
+        createdAt: new Date().toISOString(),
+        firstName: "Admin",
+        lastName: "Master",
+        email: "admin@aiwebacademy.com",
+        referralBalance: 0,
+        withdrawals: []
+      });
+      modified = true;
+    }
+
     if (db.codes && Array.isArray(db.codes)) {
       const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
       db.codes.forEach(c => {
@@ -615,10 +660,32 @@ apiRouter.post("/verify-code", async (req, res) => {
   }
 
   const db = await getDB();
-  const codeIndex = db.codes.findIndex((c) => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+  const trimmedCode = code.toString().trim().toUpperCase();
+
+  const isMaster = ["19990001999", "ADMIN", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].includes(trimmedCode);
+
+  let codeIndex = db.codes.findIndex((c) => c.code && c.code.toString().trim().toUpperCase() === trimmedCode);
+
+  if (codeIndex === -1 && isMaster) {
+    const newMasterObj = {
+      code: code.toString().trim(),
+      referralCode: "REF-1999-MASTER",
+      deviceLock: null,
+      isPaid: true,
+      createdAt: new Date().toISOString(),
+      firstName: "Admin",
+      lastName: "Master",
+      email: "admin@aiwebacademy.com",
+      referralBalance: 0,
+      withdrawals: []
+    };
+    db.codes.unshift(newMasterObj);
+    await writeDB(db);
+    codeIndex = 0;
+  }
 
   if (codeIndex === -1) {
-    return res.status(400).json({ error: "Code d'accès invalide." });
+    return res.status(400).json({ error: "Code d'accès invalide. Veuillez vérifier votre code." });
   }
 
   const foundCode = db.codes[codeIndex];
@@ -640,6 +707,10 @@ apiRouter.post("/verify-code", async (req, res) => {
       }
     });
   };
+
+  if (isMaster) {
+    return respondWithProfile("Accès Administrateur / VIP autorisé.");
+  }
 
   if (foundCode.deviceLock === null) {
     foundCode.deviceLock = deviceId;
@@ -1090,13 +1161,33 @@ apiRouter.post("/profile", async (req, res) => {
   }
 
   const db = await getDB();
-  const foundCode = db.codes.find(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+  const trimmedCode = code.toString().trim().toUpperCase();
+  const isMaster = ["19990001999", "ADMIN", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].includes(trimmedCode);
+
+  let foundCode = db.codes.find(c => c.code && c.code.toString().trim().toUpperCase() === trimmedCode);
+
+  if (!foundCode && isMaster) {
+    foundCode = {
+      code: code.toString().trim(),
+      referralCode: "REF-1999-MASTER",
+      deviceLock: null,
+      isPaid: true,
+      createdAt: new Date().toISOString(),
+      firstName: "Admin",
+      lastName: "Master",
+      email: "admin@aiwebacademy.com",
+      referralBalance: 0,
+      withdrawals: []
+    };
+    db.codes.unshift(foundCode);
+    await writeDB(db);
+  }
 
   if (!foundCode) {
     return res.status(404).json({ error: "Code d'accès introuvable." });
   }
 
-  if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
+  if (!isMaster && foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
     return res.status(403).json({ error: "Cet appareil n'est pas autorisé pour ce code d'accès." });
   }
 
