@@ -393,7 +393,9 @@ function readDB(): DBState {
   const defaultExchangeRateKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
 
   if (dbCache) {
-    dbCache.seasons = DEFAULT_SEASONS;
+    if (!dbCache.seasons || dbCache.seasons.length === 0) {
+      dbCache.seasons = DEFAULT_SEASONS;
+    }
     if (!dbCache.monerooSecretKey) {
       dbCache.monerooSecretKey = defaultMonerooKey;
     }
@@ -415,7 +417,9 @@ function readDB(): DBState {
       db = JSON.parse(data);
     }
     
-    db.seasons = DEFAULT_SEASONS;
+    if (!db.seasons || db.seasons.length === 0) {
+      db.seasons = DEFAULT_SEASONS;
+    }
     if (!db.monerooSecretKey) {
       db.monerooSecretKey = defaultMonerooKey;
     }
