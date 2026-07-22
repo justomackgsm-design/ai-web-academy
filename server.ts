@@ -149,10 +149,47 @@ async function initPostgres() {
     return;
   }
   try {
+    // Create main app_state table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS app_state (
         id SERIAL PRIMARY KEY,
         data TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Create payments table for better payment tracking
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id SERIAL PRIMARY KEY,
+        payment_id VARCHAR(100) UNIQUE NOT NULL,
+        moneroo_id VARCHAR(100),
+        first_name VARCHAR(255),
+        last_name VARCHAR(255),
+        email VARCHAR(255),
+        referred_by VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'pending',
+        generated_code VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Create access codes table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS access_codes (
+        id SERIAL PRIMARY KEY,
+        code VARCHAR(100) UNIQUE NOT NULL,
+        referral_code VARCHAR(100),
+        first_name VARCHAR(255),
+        last_name VARCHAR(255),
+        email VARCHAR(255),
+        device_lock VARCHAR(255),
+        is_paid BOOLEAN DEFAULT FALSE,
+        referral_balance DECIMAL(10, 2) DEFAULT 0,
+        referred_by VARCHAR(100),
+        usdt_address VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -524,6 +561,19 @@ apiRouter.post("/payments/create-session", async (req, res) => {
   db.pendingPayments.push(newPendingPayment);
   await writeDB(db);
 
+  // Store in PostgreSQL payments table for better tracking
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO payments (payment_id, first_name, last_name, email, referred_by, status) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [paymentId, firstName.trim(), lastName.trim(), email.trim().toLowerCase(), referredBy || null, "pending"]
+      );
+      console.log("Payment stored in PostgreSQL");
+    } catch (err) {
+      console.error("Error storing payment in PostgreSQL:", err);
+    }
+  }
+
   // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API
   let xofAmount = 28750; // default fallback ($50 * ~575)
   const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
@@ -586,6 +636,18 @@ apiRouter.post("/payments/create-session", async (req, res) => {
         if (idx !== -1) {
           dbCurrent.pendingPayments[idx].monerooId = monerooId;
           await writeDB(dbCurrent);
+        }
+      }
+
+      // Update PostgreSQL
+      if (pool) {
+        try {
+          await pool.query(
+            `UPDATE payments SET moneroo_id = $1, updated_at = NOW() WHERE payment_id = $2`,
+            [monerooId, paymentId]
+          );
+        } catch (err) {
+          console.error("Error updating moneroo_id in PostgreSQL:", err);
         }
       }
     }
@@ -667,13 +729,21 @@ apiRouter.post("/payments/verify", async (req, res) => {
         const paymentData = data.data || data;
         const status = paymentData.status;
         isApproved = ["approved", "success", "successful", "completed", "paid"].includes(String(status).toLowerCase());
+        console.log(`Payment status from Moneroo: ${status}, isApproved: ${isApproved}`);
+      } else {
+        console.warn(`Moneroo API returned status ${response.status}`);
+        return res.status(400).json({ error: `Erreur lors de la vérification: Status ${response.status}` });
       }
     } catch (err) {
       console.error("Error verifying payment with Moneroo API:", err);
+      return res.status(500).json({ error: "Impossible de vérifier le paiement avec Moneroo: " + err });
     }
   } else {
     if (!apiKey) {
       return res.status(400).json({ error: "La passerelle de paiement n'est pas configurée." });
+    }
+    if (!payment.monerooId) {
+      return res.status(400).json({ error: "ID Moneroo manquant pour cette transaction." });
     }
   }
 
@@ -722,6 +792,23 @@ apiRouter.post("/payments/verify", async (req, res) => {
     
     db.pendingPayments[paymentIdx] = payment;
     await writeDB(db);
+
+    // Update PostgreSQL
+    if (pool) {
+      try {
+        await pool.query(
+          `UPDATE payments SET status = $1, generated_code = $2, updated_at = NOW() WHERE payment_id = $3`,
+          ["completed", newCode, paymentId]
+        );
+        await pool.query(
+          `INSERT INTO access_codes (code, referral_code, first_name, last_name, email, is_paid) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [newCode, newReferralCode, payment.firstName, payment.lastName, payment.email, true]
+        );
+        console.log("Code and payment updated in PostgreSQL");
+      } catch (err) {
+        console.error("Error updating payment/code in PostgreSQL:", err);
+      }
+    }
 
     return res.json({
       success: true,
@@ -821,6 +908,22 @@ apiRouter.post("/payments/webhook", async (req, res) => {
     
     db.pendingPayments[idx] = payment;
     await writeDB(db);
+
+    // Update PostgreSQL
+    if (pool) {
+      try {
+        await pool.query(
+          `UPDATE payments SET status = $1, generated_code = $2, updated_at = NOW() WHERE payment_id = $3`,
+          ["completed", newCode, paymentId]
+        );
+        await pool.query(
+          `INSERT INTO access_codes (code, referral_code, first_name, last_name, email, is_paid) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [newCode, newReferralCode, payment.firstName, payment.lastName, payment.email, true]
+        );
+      } catch (err) {
+        console.error("Error updating webhook payment in PostgreSQL:", err);
+      }
+    }
 
     console.log(`Webhook generated code ${newCode} successfully.`);
     return res.json({ success: true, message: "Code generated." });
