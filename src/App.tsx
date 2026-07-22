@@ -3087,7 +3087,7 @@ export default function App() {
                     playsInline
                     controlsList="nodownload"
                     onContextMenu={(e) => e.preventDefault()}
-                    src={`/api/public-video/${presentationVideoPath}`}
+                    src={presentationVideoPath.startsWith("http") ? presentationVideoPath : `/api/public-video/${presentationVideoPath}`}
                   />
                 ) : (
                   <iframe

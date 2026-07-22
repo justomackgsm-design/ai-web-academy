@@ -1461,11 +1461,15 @@ apiRouter.get("/public-video/:filename", async (req, res) => {
   const { filename } = req.params;
   
   const db = await getDB();
-  if (db.presentationVideoPath !== filename) {
+  const currentPath = db.presentationVideoPath || "";
+  const isMatch = currentPath === filename || path.basename(currentPath) === filename || currentPath.includes(filename);
+
+  if (!isMatch) {
     return res.status(403).send("Accès refusé. Cette vidéo n'est pas configurée comme vidéo de présentation.");
   }
 
-  const videoFilePath = path.join(UPLOADS_DIR, filename);
+  const targetFilename = path.basename(currentPath) || filename;
+  const videoFilePath = path.join(UPLOADS_DIR, targetFilename);
   if (!fs.existsSync(videoFilePath)) {
     return res.status(404).send("Fichier vidéo introuvable sur le serveur.");
   }
