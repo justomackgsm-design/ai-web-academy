@@ -239,6 +239,11 @@ export default function App() {
   const [paymentCurrency, setPaymentCurrency] = useState<string>("USD");
   const [publicPaymentAmount, setPublicPaymentAmount] = useState<number>(50);
   const [publicPaymentCurrency, setPublicPaymentCurrency] = useState<string>("USD");
+  const [originalPrice, setOriginalPrice] = useState<number>(100);
+  const [promoPrice, setPromoPrice] = useState<number>(50);
+  const [isPromoActive, setIsPromoActive] = useState<boolean>(false);
+  const [publicOriginalPrice, setPublicOriginalPrice] = useState<number>(100);
+  const [publicIsPromoActive, setPublicIsPromoActive] = useState<boolean>(false);
   const [telegramLink, setTelegramLink] = useState<string>("");
   const [whatsappLink, setWhatsappLink] = useState<string>("");
   const [presentationVideoUrl, setPresentationVideoUrl] = useState<string>("");
@@ -393,6 +398,8 @@ export default function App() {
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
         if (data.paymentAmount !== undefined) setPublicPaymentAmount(data.paymentAmount);
         if (data.paymentCurrency) setPublicPaymentCurrency(data.paymentCurrency);
+        if (data.originalPrice !== undefined) setPublicOriginalPrice(data.originalPrice);
+        if (data.isPromoActive !== undefined) setPublicIsPromoActive(data.isPromoActive);
         if (data.seasons && data.seasons.length > 0) {
           setActiveSeasonId(data.seasons[0].id);
         }
@@ -481,7 +488,10 @@ export default function App() {
           presentationVideoUrl,
           presentationVideoPath,
           paymentAmount,
-          paymentCurrency
+          paymentCurrency,
+          originalPrice,
+          promoPrice,
+          isPromoActive
         })
       });
       const data = await res.json();
@@ -763,6 +773,9 @@ export default function App() {
         if (data.monerooPublicKey) setMonerooPublicKey(data.monerooPublicKey);
         if (data.paymentAmount !== undefined) setPaymentAmount(data.paymentAmount);
         if (data.paymentCurrency) setPaymentCurrency(data.paymentCurrency);
+        if (data.originalPrice !== undefined) setOriginalPrice(data.originalPrice);
+        if (data.promoPrice !== undefined) setPromoPrice(data.promoPrice);
+        if (data.isPromoActive !== undefined) setIsPromoActive(data.isPromoActive);
         if (data.telegramLink) setTelegramLink(data.telegramLink);
         if (data.whatsappLink) setWhatsappLink(data.whatsappLink);
         if (data.presentationVideoUrl) setPresentationVideoUrl(data.presentationVideoUrl);
@@ -2641,6 +2654,57 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Promo Pricing Section */}
+                        <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider">
+                              🏷️ Prix Promotionnel
+                            </h4>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <span className="text-xs text-slate-600 font-medium">Activer la promo</span>
+                              <div
+                                onClick={() => setIsPromoActive(!isPromoActive)}
+                                className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${isPromoActive ? "bg-green-500" : "bg-slate-300"}`}
+                              >
+                                <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${isPromoActive ? "translate-x-4" : ""}`} />
+                              </div>
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                                Prix Original (barré)
+                              </label>
+                              <input
+                                type="number"
+                                value={originalPrice}
+                                onChange={(e) => setOriginalPrice(parseFloat(e.target.value) || 0)}
+                                placeholder="100"
+                                className="w-full bg-white border border-slate-200 focus:border-amber-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                              />
+                              <p className="text-[10px] text-slate-400 mt-1">Affiché barré en rouge</p>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                                Prix Promo (affiché)
+                              </label>
+                              <input
+                                type="number"
+                                value={promoPrice}
+                                onChange={(e) => setPromoPrice(parseFloat(e.target.value) || 0)}
+                                placeholder="50"
+                                className="w-full bg-white border border-slate-200 focus:border-amber-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                              />
+                              <p className="text-[10px] text-slate-400 mt-1">Prix envoyé au paiement</p>
+                            </div>
+                          </div>
+                          {isPromoActive && (
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-xs text-green-700 font-medium">
+                              ✅ Promo active — les clients voient <span className="line-through text-slate-400">{originalPrice} {paymentCurrency}</span> → <strong>{promoPrice} {paymentCurrency}</strong>
+                            </div>
+                          )}
+                        </div>
+
                         <div className="border-t border-slate-100 pt-4">
                           <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
                             Liens des Réseaux Sociaux & Assistance
@@ -4127,7 +4191,18 @@ export default function App() {
                 </div>
 
                 <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 text-xs text-indigo-700">
-                  <span className="font-bold">Tarif d'accès : {publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""} {publicPaymentCurrency}</span> (Frais de service et hébergement privé inclus). Accès définitif sur 1 appareil.
+                  {publicIsPromoActive && publicOriginalPrice > publicPaymentAmount ? (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="line-through text-slate-400">{publicOriginalPrice.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""}{publicPaymentCurrency}</span>
+                        <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide animate-pulse">PROMO</span>
+                      </div>
+                      <span className="font-bold text-indigo-700 text-sm">{publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""}{publicPaymentCurrency}</span>
+                    </div>
+                  ) : (
+                    <span className="font-bold">Tarif d'accès : {publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""}{publicPaymentCurrency}</span>
+                  )}
+                  <span className="block mt-1">(Frais de service et hébergement privé inclus). Accès définitif sur 1 appareil.</span>
                 </div>
 
                 <div className="space-y-3">

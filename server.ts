@@ -11,7 +11,7 @@ import { Readable } from "stream";
 dotenv.config();
 
 const DATA_DIR = path.join(process.cwd(), "data");
-const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+const UPLOADS_DIR = process.env.VERCEL ? "/tmp/uploads" : path.join(DATA_DIR, "uploads");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
 // Ensure directories exist safely (avoiding read-only filesystem crashes on Vercel)
@@ -76,6 +76,11 @@ interface DBState {
   whatsappLink?: string;
   presentationVideoUrl?: string;
   presentationVideoPath?: string;
+  paymentAmount?: number;
+  paymentCurrency?: string;
+  originalPrice?: number;
+  promoPrice?: number;
+  isPromoActive?: boolean;
   pendingPayments?: Array<{
     id: string;
     firstName: string;
@@ -148,6 +153,11 @@ const DEFAULT_DB: DBState = {
   telegramLink: "https://t.me/ai_academy_fit",
   whatsappLink: "https://wa.me/33600000000",
   presentationVideoUrl: "https://www.youtube.com/embed/8m9g_b95Eto",
+  paymentAmount: 50,
+  paymentCurrency: "USD",
+  originalPrice: 100,
+  promoPrice: 50,
+  isPromoActive: true,
   pendingPayments: []
 };
 
@@ -235,8 +245,21 @@ async function initPostgres() {
         telegram_link TEXT,
         whatsapp_link TEXT,
         presentation_video_url TEXT,
-        presentation_video_path TEXT
+        presentation_video_path TEXT,
+        payment_amount NUMERIC(12,2) DEFAULT 50,
+        payment_currency VARCHAR(10) DEFAULT 'USD',
+        original_price NUMERIC(12,2) DEFAULT 100,
+        promo_price NUMERIC(12,2) DEFAULT 50,
+        is_promo_active BOOLEAN DEFAULT TRUE
       );
+      -- Add columns if they don't exist (migration for existing deployments)
+      DO $$ BEGIN
+        BEGIN ALTER TABLE admin_settings ADD COLUMN payment_amount NUMERIC(12,2) DEFAULT 50; EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE admin_settings ADD COLUMN payment_currency VARCHAR(10) DEFAULT 'USD'; EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE admin_settings ADD COLUMN original_price NUMERIC(12,2) DEFAULT 100; EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE admin_settings ADD COLUMN promo_price NUMERIC(12,2) DEFAULT 50; EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE admin_settings ADD COLUMN is_promo_active BOOLEAN DEFAULT TRUE; EXCEPTION WHEN duplicate_column THEN NULL; END;
+      END $$;
 
       CREATE TABLE IF NOT EXISTS app_state (
         id SERIAL PRIMARY KEY,
@@ -279,8 +302,8 @@ async function syncToRelationalTables(state: DBState) {
   try {
     // 1. Admin Settings
     await pool.query(`
-      INSERT INTO admin_settings (id, admin_password, moneroo_secret_key, moneroo_public_key, exchange_rate_api_key, telegram_link, whatsapp_link, presentation_video_url, presentation_video_path)
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
+      INSERT INTO admin_settings (id, admin_password, moneroo_secret_key, moneroo_public_key, exchange_rate_api_key, telegram_link, whatsapp_link, presentation_video_url, presentation_video_path, payment_amount, payment_currency, original_price, promo_price, is_promo_active)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (id) DO UPDATE SET
         admin_password = EXCLUDED.admin_password,
         moneroo_secret_key = EXCLUDED.moneroo_secret_key,
@@ -289,7 +312,12 @@ async function syncToRelationalTables(state: DBState) {
         telegram_link = EXCLUDED.telegram_link,
         whatsapp_link = EXCLUDED.whatsapp_link,
         presentation_video_url = EXCLUDED.presentation_video_url,
-        presentation_video_path = EXCLUDED.presentation_video_path;
+        presentation_video_path = EXCLUDED.presentation_video_path,
+        payment_amount = EXCLUDED.payment_amount,
+        payment_currency = EXCLUDED.payment_currency,
+        original_price = EXCLUDED.original_price,
+        promo_price = EXCLUDED.promo_price,
+        is_promo_active = EXCLUDED.is_promo_active;
     `, [
       state.adminPassword || "19990001999",
       state.monerooSecretKey || "",
@@ -298,7 +326,12 @@ async function syncToRelationalTables(state: DBState) {
       state.telegramLink || "",
       state.whatsappLink || "",
       state.presentationVideoUrl || "",
-      state.presentationVideoPath || ""
+      state.presentationVideoPath || "",
+      state.paymentAmount ?? 50,
+      state.paymentCurrency || "USD",
+      state.originalPrice ?? 100,
+      state.promoPrice ?? 50,
+      state.isPromoActive ?? false
     ]);
 
     // 2. Seasons
@@ -440,6 +473,8 @@ function readDB(): DBState {
       db = JSON.parse(data);
     }
     
+    let modified = false;
+
     if (!db.seasons || db.seasons.length === 0) {
       db.seasons = DEFAULT_SEASONS;
     }
@@ -453,8 +488,12 @@ function readDB(): DBState {
     if (!db.exchangeRateApiKey) {
       db.exchangeRateApiKey = defaultExchangeRateKey;
     }
+    if (db.paymentAmount === undefined) { db.paymentAmount = 50; }
+    if (!db.paymentCurrency) { db.paymentCurrency = "USD"; }
+    if (db.originalPrice === undefined) { db.originalPrice = 100; }
+    if (db.promoPrice === undefined) { db.promoPrice = 50; }
+    if (db.isPromoActive === undefined) { db.isPromoActive = true; }
 
-    let modified = false;
     if (!db.codes || !Array.isArray(db.codes)) {
       db.codes = [];
       modified = true;
@@ -580,7 +619,10 @@ const storage = multer.diskStorage({
     cb(null, `video-${uniqueSuffix}${ext}`);
   }
 });
-const upload = multer({ storage });
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB max for video files
+});
 
 // Middleware to check Admin Access
 const checkAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -654,7 +696,12 @@ apiRouter.get("/public-state", async (req, res) => {
     telegramLink: db.telegramLink || "https://t.me/ai_academy_fit",
     whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
     presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
-    presentationVideoPath: db.presentationVideoPath || ""
+    presentationVideoPath: db.presentationVideoPath || "",
+    paymentAmount: db.isPromoActive ? (db.promoPrice ?? db.paymentAmount ?? 50) : (db.paymentAmount ?? 50),
+    paymentCurrency: db.paymentCurrency || "USD",
+    originalPrice: db.originalPrice ?? 100,
+    promoPrice: db.promoPrice ?? 50,
+    isPromoActive: db.isPromoActive ?? false
   });
 });
 
@@ -839,12 +886,14 @@ apiRouter.post("/payments/create-session", async (req, res) => {
   db.pendingPayments.push(newPendingPayment);
   await writeDB(db);
 
-  // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API
-  let xofAmount = 28750; // default fallback ($50 * ~575)
+  // Dynamic Currency Conversion via ExchangeRate API
+  const activeAmount = db.isPromoActive && db.promoPrice ? db.promoPrice : (db.paymentAmount || 50);
+  const activeCurrency = db.paymentCurrency || "USD";
+  let xofAmount = Math.round(activeAmount * 575); // default fallback
   const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
-  if (rateApiKey) {
+  if (rateApiKey && activeCurrency === "USD") {
     try {
-      const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/50`);
+      const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/${activeAmount}`);
       if (rateRes.ok) {
         const rateData: any = await rateRes.json();
         if (rateData && rateData.conversion_result) {
@@ -1146,7 +1195,7 @@ apiRouter.post("/payments/webhook", async (req, res) => {
 
 // Admin Update Settings
 apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
-  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath } = req.body;
+  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath, paymentAmount, paymentCurrency, originalPrice, promoPrice, isPromoActive } = req.body;
   const db = await getDB();
   db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
   db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
@@ -1155,6 +1204,11 @@ apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
   db.whatsappLink = whatsappLink ? whatsappLink.trim() : "";
   db.presentationVideoUrl = presentationVideoUrl ? presentationVideoUrl.trim() : "";
   db.presentationVideoPath = presentationVideoPath !== undefined ? presentationVideoPath.trim() : "";
+  if (paymentAmount !== undefined) db.paymentAmount = Number(paymentAmount) || 50;
+  if (paymentCurrency) db.paymentCurrency = paymentCurrency.trim().toUpperCase();
+  if (originalPrice !== undefined) db.originalPrice = Number(originalPrice) || 100;
+  if (promoPrice !== undefined) db.promoPrice = Number(promoPrice) || 50;
+  if (isPromoActive !== undefined) db.isPromoActive = Boolean(isPromoActive);
   await writeDB(db);
   res.json({ success: true, message: "Configuration mise à jour avec succès !" });
 });
@@ -1314,6 +1368,11 @@ apiRouter.get("/admin/data", checkAdmin, async (req, res) => {
     whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
     presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
     presentationVideoPath: db.presentationVideoPath || "",
+    paymentAmount: db.paymentAmount ?? 50,
+    paymentCurrency: db.paymentCurrency || "USD",
+    originalPrice: db.originalPrice ?? 100,
+    promoPrice: db.promoPrice ?? 50,
+    isPromoActive: db.isPromoActive ?? false,
     pendingPayments: db.pendingPayments || []
   });
 });
@@ -1736,6 +1795,12 @@ async function startServer() {
   }
 }
 
-startServer();
+// Only run the full server setup locally (not on Vercel serverless)
+if (!process.env.VERCEL) {
+  startServer();
+} else {
+  // On Vercel, initialize postgres asynchronously on cold start
+  initPostgres().catch(err => console.error("Vercel cold start initPostgres error:", err));
+}
 
 export default app;
