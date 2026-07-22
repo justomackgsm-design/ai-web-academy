@@ -159,52 +159,12 @@ async function initPostgres() {
         data TEXT NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      CREATE TABLE IF NOT EXISTS seasons (
-        id VARCHAR(255) PRIMARY KEY,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS episodes (
-        id VARCHAR(255) PRIMARY KEY,
-        season_id VARCHAR(255) NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL,
-        video_path TEXT NOT NULL,
-        original_name TEXT NOT NULL,
-        duration VARCHAR(100),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS access_codes (
-        code VARCHAR(255) PRIMARY KEY,
-        referral_code VARCHAR(255),
-        device_lock VARCHAR(255),
-        is_paid BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        first_name VARCHAR(255),
-        last_name VARCHAR(255),
-        email VARCHAR(255),
-        referral_balance NUMERIC DEFAULT 0,
-        referred_by VARCHAR(255),
-        usdt_address TEXT
-      );
-      CREATE TABLE IF NOT EXISTS pending_payments (
-        id VARCHAR(255) PRIMARY KEY,
-        first_name VARCHAR(255),
-        last_name VARCHAR(255),
-        email VARCHAR(255),
-        referred_by VARCHAR(255),
-        status VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        moneroo_id VARCHAR(255),
-        generated_code VARCHAR(255)
-      );
     `);
     
     const res = await pool.query(`SELECT data FROM app_state ORDER BY id ASC LIMIT 1`);
     if (res.rows.length > 0) {
       console.log("Successfully connected and loaded state from Neon PostgreSQL.");
       dbCache = JSON.parse(res.rows[0].data);
-      // Synchronize with local file for offline fallback consistency if filesystem is writable
       try {
         if (fs.existsSync(DATA_DIR)) {
           fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2), "utf8");
@@ -219,14 +179,14 @@ async function initPostgres() {
       dbCache = JSON.parse(JSON.stringify(DEFAULT_DB));
     }
   } catch (err) {
-    console.error("Failed to connect/initialize PostgreSQL (Neon). Falling back to local storage:", err);
+    console.error("PostgreSQL connection/init error:", err);
   }
 }
 
-// Helper to read and write database
 function readDB(): DBState {
   const defaultMonerooKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
   const defaultExchangeRateKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+
   if (dbCache) {
     dbCache.seasons = DEFAULT_SEASONS;
     if (!dbCache.monerooSecretKey) {
@@ -237,6 +197,7 @@ function readDB(): DBState {
     }
     return dbCache;
   }
+
   try {
     let db: DBState;
     if (!fs.existsSync(DB_FILE)) {
@@ -249,7 +210,6 @@ function readDB(): DBState {
       db = JSON.parse(data);
     }
     
-    // Always keep seasons up-to-date with code changes
     db.seasons = DEFAULT_SEASONS;
     if (!db.monerooSecretKey) {
       db.monerooSecretKey = defaultMonerooKey;
@@ -258,7 +218,6 @@ function readDB(): DBState {
       db.exchangeRateApiKey = defaultExchangeRateKey;
     }
 
-    // Migrate: Ensure every code has a referralCode
     let modified = false;
     if (db.codes && Array.isArray(db.codes)) {
       const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -284,12 +243,12 @@ function readDB(): DBState {
     dbCache = db;
     return db;
   } catch (err) {
-    console.error("Error reading database file, using fallback:", err);
+    console.error("Error reading database:", err);
     return DEFAULT_DB;
   }
 }
 
-async function writeDB(state: DBState) {
+async function writeDB(state: DBState): Promise<void> {
   dbCache = state;
   try {
     if (fs.existsSync(DATA_DIR)) {
@@ -313,10 +272,10 @@ async function writeDB(state: DBState) {
   }
 }
 
-async function uploadToBlobIfNeeded(file: any): Promise<string> {
+// Upload file to Vercel Blob storage if BLOB_READ_WRITE_TOKEN is present
+async function uploadToBlobIfNeeded(file: Express.Multer.File): Promise<string> {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (token) {
-    console.log(`Vercel Blob token detected. Uploading ${file.originalname} to Vercel Blob...`);
     try {
       const fileStream = fs.createReadStream(file.path);
       const blob = await put(`courses/${Date.now()}-${file.originalname.replace(/\s+/g, "_")}`, fileStream, {
@@ -324,7 +283,6 @@ async function uploadToBlobIfNeeded(file: any): Promise<string> {
         token: token
       });
       console.log(`Uploaded successfully to Vercel Blob: ${blob.url}`);
-      // Clean up local temp file
       try {
         fs.unlinkSync(file.path);
       } catch (e) {}
@@ -343,140 +301,387 @@ app.use(express.json());
 // Ensure Neon PostgreSQL is loaded on serverless cold start
 app.use(async (req, res, next) => {
   if (!dbCache && pool) {
-    await initPostgres();
+    try {
+      await initPostgres();
+    } catch (e) {
+      console.error("Cold start initPostgres error:", e);
+    }
   }
   next();
 });
 
-async function startServer() {
-  await initPostgres();
-  const PORT = 3000;
+// Setup multer for local file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, `video-${uniqueSuffix}${ext}`);
+  }
+});
+const upload = multer({ storage });
 
-  // Setup multer for local file uploads
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, UPLOADS_DIR);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-      const ext = path.extname(file.originalname);
-      cb(null, `video-${uniqueSuffix}${ext}`);
-    }
+// Middleware to check Admin Access
+const checkAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const password = req.headers["x-admin-password"];
+  const db = readDB();
+  const adminPassword = db.adminPassword || "19990001999";
+  if (password === adminPassword || password === "19990001999") {
+    next();
+  } else {
+    res.status(401).json({ error: "Mot de passe administrateur incorrect" });
+  }
+};
+
+// Helper to verify code with a deviceId
+const isCodeValid = (code: string, deviceId: string): { valid: boolean; error?: string } => {
+  const db = readDB();
+  const foundCode = db.codes.find((c) => c.code === code);
+  if (!foundCode) {
+    return { valid: false, error: "Code d'accès invalide ou inexistant." };
+  }
+  if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
+    return { valid: false, error: "Ce code est déjà utilisé par un autre appareil." };
+  }
+  return { valid: true };
+};
+
+// Create Express Router for all API endpoints
+const apiRouter = express.Router();
+
+// GET Public Info
+apiRouter.get("/public-state", (req, res) => {
+  const db = readDB();
+  const publicEpisodes = db.episodes.map(ep => ({
+    id: ep.id,
+    seasonId: ep.seasonId,
+    title: ep.title,
+    description: ep.description,
+    videoPath: ep.videoPath,
+    duration: ep.duration,
+    createdAt: ep.createdAt
+  }));
+  res.json({
+    seasons: db.seasons,
+    episodes: publicEpisodes,
+    telegramLink: db.telegramLink || "https://t.me/ai_academy_fit",
+    whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
+    presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
+    presentationVideoPath: db.presentationVideoPath || ""
   });
-  const upload = multer({ storage });
+});
 
-  // Middleware to check Admin Access
-  const checkAdmin = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const password = req.headers["x-admin-password"];
-    const db = readDB();
-    const adminPassword = db.adminPassword || "19990001999";
-    if (password === adminPassword || password === "19990001999") {
-      next();
-    } else {
-      res.status(401).json({ error: "Mot de passe administrateur incorrect" });
-    }
-  };
+// Verify and register access code
+apiRouter.post("/verify-code", async (req, res) => {
+  const { code, deviceId } = req.body;
+  if (!code || !deviceId) {
+    return res.status(400).json({ error: "Code et identifiant d'appareil requis." });
+  }
 
-  // Helper to verify code with a deviceId
-  const isCodeValid = (code: string, deviceId: string): { valid: boolean; error?: string } => {
-    const db = readDB();
-    const foundCode = db.codes.find((c) => c.code === code);
-    if (!foundCode) {
-      return { valid: false, error: "Code d'accès invalide ou inexistant." };
-    }
-    if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
-      return { valid: false, error: "Ce code est déjà utilisé par un autre appareil." };
-    }
-    return { valid: true };
-  };
+  const db = readDB();
+  const codeIndex = db.codes.findIndex((c) => c.code.trim().toUpperCase() === code.trim().toUpperCase());
 
-  // API: Get Public Info (Seasons & Episode Meta, but without sensitive video paths if unverified)
-  app.get("/api/public-state", (req, res) => {
-    const db = readDB();
-    // Return all seasons and episode titles/descriptions (so users can see what the courses are about)
-    const publicEpisodes = db.episodes.map(ep => ({
-      id: ep.id,
-      seasonId: ep.seasonId,
-      title: ep.title,
-      description: ep.description,
-      videoPath: ep.videoPath,
-      duration: ep.duration,
-      createdAt: ep.createdAt
-    }));
-    res.json({
-      seasons: db.seasons,
-      episodes: publicEpisodes,
-      telegramLink: db.telegramLink || "https://t.me/ai_academy_fit",
-      whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
-      presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
-      presentationVideoPath: db.presentationVideoPath || ""
+  if (codeIndex === -1) {
+    return res.status(400).json({ error: "Code d'accès invalide." });
+  }
+
+  const foundCode = db.codes[codeIndex];
+
+  const respondWithProfile = (message: string) => {
+    return res.json({
+      success: true,
+      message,
+      profile: {
+        code: foundCode.code,
+        referralCode: foundCode.referralCode || "",
+        firstName: foundCode.firstName || "Étudiant",
+        lastName: foundCode.lastName || "Élite",
+        email: foundCode.email || "etudiant@aiwebacademy.com",
+        referralBalance: foundCode.referralBalance || 0,
+        referredBy: foundCode.referredBy || "",
+        usdtAddress: foundCode.usdtAddress || "",
+        withdrawals: foundCode.withdrawals || []
+      }
     });
+  };
+
+  if (foundCode.deviceLock === null) {
+    foundCode.deviceLock = deviceId;
+    db.codes[codeIndex] = foundCode;
+    await writeDB(db);
+    return respondWithProfile("Code validé et lié à cet appareil !");
+  }
+
+  if (foundCode.deviceLock === deviceId) {
+    return respondWithProfile("Accès autorisé.");
+  }
+
+  return res.status(403).json({
+    error: "Sécurité : Ce code d'accès est déjà configuré sur un autre appareil. Un code ne peut servir que sur un seul appareil."
   });
+});
 
-  // API: Verify and register access code
-  app.post("/api/verify-code", (req, res) => {
-    const { code, deviceId } = req.body;
-    if (!code || !deviceId) {
-      return res.status(400).json({ error: "Code et identifiant d'appareil requis." });
+// Buy a code (Register user and process payment)
+apiRouter.post("/buy-code", async (req, res) => {
+  const { firstName, lastName, email, referredBy } = req.body;
+  
+  if (!firstName || !lastName || !email) {
+    return res.status(400).json({ error: "Le nom, le prénom et l'adresse email sont obligatoires." });
+  }
+
+  const db = readDB();
+  
+  const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let newCode = "IA-";
+  for (let i = 0; i < 8; i++) {
+    if (i === 4) newCode += "-";
+    newCode += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  let newReferralCode = "REF-";
+  for (let i = 0; i < 8; i++) {
+    if (i === 4) newReferralCode += "-";
+    newReferralCode += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  let validReferrerCode = "";
+  if (referredBy && referredBy.trim()) {
+    const cleanRef = referredBy.trim().toUpperCase();
+    const referrerIdx = db.codes.findIndex(c => c.referralCode?.trim().toUpperCase() === cleanRef);
+    if (referrerIdx !== -1) {
+      validReferrerCode = db.codes[referrerIdx].referralCode || "";
+      db.codes[referrerIdx].referralBalance = (db.codes[referrerIdx].referralBalance || 0) + 5;
+    }
+  }
+
+  const newAccessCode: AccessCode = {
+    code: newCode,
+    referralCode: newReferralCode,
+    deviceLock: null,
+    isPaid: true,
+    createdAt: new Date().toISOString(),
+    firstName: firstName.trim(),
+    lastName: lastName.trim(),
+    email: email.trim().toLowerCase(),
+    referralBalance: 0,
+    referredBy: validReferrerCode || undefined,
+    withdrawals: []
+  };
+
+  db.codes.push(newAccessCode);
+  await writeDB(db);
+
+  res.json({
+    success: true,
+    code: newCode,
+    profile: {
+      code: newCode,
+      referralCode: newReferralCode,
+      firstName: newAccessCode.firstName,
+      lastName: newAccessCode.lastName,
+      email: newAccessCode.email,
+      referralBalance: 0,
+      referredBy: newAccessCode.referredBy || "",
+      usdtAddress: "",
+      withdrawals: []
+    }
+  });
+});
+
+// Create Moneroo Payment Session
+apiRouter.post("/payments/create-session", async (req, res) => {
+  const { firstName, lastName, email, referredBy } = req.body;
+  if (!firstName || !lastName || !email) {
+    return res.status(400).json({ error: "Le prénom, le nom et l'adresse email sont obligatoires." });
+  }
+
+  const db = readDB();
+  const apiKey = db.monerooSecretKey;
+  if (!apiKey) {
+    return res.status(400).json({ error: "La clé API de paiement Moneroo n'est pas encore configurée par l'administrateur de l'Académie." });
+  }
+
+  const paymentId = "pay-" + Date.now() + "-" + Math.random().toString(36).substring(2, 8).toUpperCase();
+
+  const host = req.get("host");
+  const protocol = req.secure || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+  const baseUrl = `${protocol}://${host}`;
+
+  const returnUrl = `${baseUrl}/?payment_status=success&payment_id=${paymentId}`;
+  const cancelUrl = `${baseUrl}/?payment_status=cancel`;
+
+  if (!db.pendingPayments) {
+    db.pendingPayments = [];
+  }
+  const newPendingPayment = {
+    id: paymentId,
+    firstName: firstName.trim(),
+    lastName: lastName.trim(),
+    email: email.trim().toLowerCase(),
+    referredBy: referredBy ? referredBy.trim().toUpperCase() : undefined,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    monerooId: ""
+  };
+  db.pendingPayments.push(newPendingPayment);
+  await writeDB(db);
+
+  // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API
+  let xofAmount = 28750; // default fallback ($50 * ~575)
+  const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+  if (rateApiKey) {
+    try {
+      const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/50`);
+      if (rateRes.ok) {
+        const rateData: any = await rateRes.json();
+        if (rateData && rateData.conversion_result) {
+          xofAmount = Math.round(rateData.conversion_result);
+          console.log(`Converted $50 USD -> ${xofAmount} XOF (Rate: ${rateData.conversion_rate})`);
+        }
+      } else {
+        console.warn("ExchangeRate API response not OK, using default conversion:", rateRes.status);
+      }
+    } catch (err) {
+      console.error("ExchangeRate API conversion error, using fallback XOF amount:", err);
+    }
+  }
+
+  try {
+    const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "Accept": "application/json"
+      },
+      body: JSON.stringify({
+        amount: xofAmount,
+        currency: "XOF",
+        description: `Formation Ultime IA - ${firstName.trim()} ${lastName.trim()}`,
+        customer: {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          email: email.trim().toLowerCase()
+        },
+        return_url: returnUrl,
+        cancel_url: cancelUrl,
+        metadata: {
+          paymentId: paymentId
+        }
+      })
+    });
+
+    const data: any = await response.json();
+    console.log("Moneroo Response:", data);
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: data.message || "Erreur lors de la création de la session de paiement chez Moneroo."
+      });
     }
 
-    const db = readDB();
-    const codeIndex = db.codes.findIndex((c) => c.code.trim().toUpperCase() === code.trim().toUpperCase());
-
-    if (codeIndex === -1) {
-      return res.status(400).json({ error: "Code d'accès invalide." });
+    const monerooId = data.id || (data.data && data.data.id) || "";
+    if (monerooId) {
+      const dbCurrent = readDB();
+      if (dbCurrent.pendingPayments) {
+        const idx = dbCurrent.pendingPayments.findIndex(p => p.id === paymentId);
+        if (idx !== -1) {
+          dbCurrent.pendingPayments[idx].monerooId = monerooId;
+          await writeDB(dbCurrent);
+        }
+      }
     }
 
-    const foundCode = db.codes[codeIndex];
+    const checkoutUrl = (data.data && data.data.checkout_url) ||
+                        data.checkout_url || 
+                        data.payment_url || 
+                        data.redirect_url || 
+                        data.url;
 
-    const respondWithProfile = (message: string) => {
+    if (!checkoutUrl) {
+      return res.status(500).json({
+        error: "Aucune URL de redirection de paiement n'a été renvoyée par Moneroo."
+      });
+    }
+
+    res.json({
+      success: true,
+      paymentId,
+      checkoutUrl
+    });
+
+  } catch (err: any) {
+    console.error("Error connecting to Moneroo:", err);
+    res.status(500).json({ error: "Impossible de contacter la passerelle de paiement Moneroo: " + err.message });
+  }
+});
+
+// Verify payment status and generate access code if successful
+apiRouter.post("/payments/verify", async (req, res) => {
+  const { paymentId } = req.body;
+  if (!paymentId) {
+    return res.status(400).json({ error: "ID de paiement manquant." });
+  }
+
+  const db = readDB();
+  if (!db.pendingPayments) db.pendingPayments = [];
+  const paymentIdx = db.pendingPayments.findIndex(p => p.id === paymentId);
+  if (paymentIdx === -1) {
+    return res.status(404).json({ error: "Transaction introuvable." });
+  }
+
+  const payment = db.pendingPayments[paymentIdx];
+
+  if (payment.status === "completed" && payment.generatedCode) {
+    const foundCode = db.codes.find(c => c.code === payment.generatedCode);
+    if (foundCode) {
       return res.json({
         success: true,
-        message,
+        code: foundCode.code,
         profile: {
           code: foundCode.code,
           referralCode: foundCode.referralCode || "",
-          firstName: foundCode.firstName || "Étudiant",
-          lastName: foundCode.lastName || "Élite",
-          email: foundCode.email || "etudiant@aiwebacademy.com",
+          firstName: foundCode.firstName || payment.firstName,
+          lastName: foundCode.lastName || payment.lastName,
+          email: foundCode.email || payment.email,
           referralBalance: foundCode.referralBalance || 0,
           referredBy: foundCode.referredBy || "",
           usdtAddress: foundCode.usdtAddress || "",
           withdrawals: foundCode.withdrawals || []
         }
       });
-    };
-
-    if (foundCode.deviceLock === null) {
-      // First time use! Lock it to this device
-      foundCode.deviceLock = deviceId;
-      db.codes[codeIndex] = foundCode;
-      writeDB(db);
-      return respondWithProfile("Code validé et lié à cet appareil !");
     }
+  }
 
-    if (foundCode.deviceLock === deviceId) {
-      // Already locked to this device, authorized
-      return respondWithProfile("Accès autorisé.");
+  const apiKey = db.monerooSecretKey;
+  let isApproved = false;
+
+  if (apiKey && payment.monerooId) {
+    try {
+      const response = await fetch(`https://api.moneroo.io/v1/payments/${payment.monerooId}`, {
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Accept": "application/json"
+        }
+      });
+      if (response.ok) {
+        const data: any = await response.json();
+        const paymentData = data.data || data;
+        const status = paymentData.status;
+        isApproved = ["approved", "success", "successful", "completed", "paid"].includes(String(status).toLowerCase());
+      }
+    } catch (err) {
+      console.error("Error verifying payment with Moneroo API:", err);
     }
-
-    // Locked to a different device
-    return res.status(403).json({
-      error: "Sécurité : Ce code d'accès est déjà configuré sur un autre appareil. Un code ne peut servir que sur un seul appareil."
-    });
-  });
-
-  // API: Buy a code (Register user and process payment)
-  app.post("/api/buy-code", (req, res) => {
-    const { firstName, lastName, email, referredBy } = req.body;
-    
-    if (!firstName || !lastName || !email) {
-      return res.status(400).json({ error: "Le nom, le prénom et l'adresse email sont obligatoires." });
+  } else {
+    if (!apiKey) {
+      return res.status(400).json({ error: "La passerelle de paiement n'est pas configurée." });
     }
+  }
 
-    const db = readDB();
-    
-    // Generate code
+  if (isApproved) {
     const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let newCode = "IA-";
     for (let i = 0; i < 8; i++) {
@@ -484,18 +689,15 @@ async function startServer() {
       newCode += characters.charAt(Math.floor(Math.random() * characters.length));
     }
 
-    // Generate distinct referral code
     let newReferralCode = "REF-";
     for (let i = 0; i < 8; i++) {
       if (i === 4) newReferralCode += "-";
       newReferralCode += characters.charAt(Math.floor(Math.random() * characters.length));
     }
 
-    // Process referral code if provided
     let validReferrerCode = "";
-    if (referredBy && referredBy.trim()) {
-      const cleanRef = referredBy.trim().toUpperCase();
-      // Search by referralCode instead of access code!
+    if (payment.referredBy) {
+      const cleanRef = payment.referredBy.trim().toUpperCase();
       const referrerIdx = db.codes.findIndex(c => c.referralCode?.trim().toUpperCase() === cleanRef);
       if (referrerIdx !== -1) {
         validReferrerCode = db.codes[referrerIdx].referralCode || "";
@@ -509,938 +711,673 @@ async function startServer() {
       deviceLock: null,
       isPaid: true,
       createdAt: new Date().toISOString(),
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      email: email.trim().toLowerCase(),
+      firstName: payment.firstName,
+      lastName: payment.lastName,
+      email: payment.email,
       referralBalance: 0,
       referredBy: validReferrerCode || undefined,
       withdrawals: []
     };
 
     db.codes.push(newAccessCode);
-    writeDB(db);
+    
+    payment.status = "completed";
+    payment.generatedCode = newCode;
+    
+    db.pendingPayments[paymentIdx] = payment;
+    await writeDB(db);
 
-    res.json({
+    return res.json({
       success: true,
       code: newCode,
       profile: {
         code: newCode,
         referralCode: newReferralCode,
-        firstName: newAccessCode.firstName,
-        lastName: newAccessCode.lastName,
-        email: newAccessCode.email,
+        firstName: payment.firstName,
+        lastName: payment.lastName,
+        email: payment.email,
         referralBalance: 0,
-        referredBy: newAccessCode.referredBy || "",
+        referredBy: validReferrerCode,
         usdtAddress: "",
         withdrawals: []
       }
     });
-  });
-
-  // API: Create Moneroo Payment Session
-  app.post("/api/payments/create-session", async (req, res) => {
-    const { firstName, lastName, email, referredBy } = req.body;
-    if (!firstName || !lastName || !email) {
-      return res.status(400).json({ error: "Le prénom, le nom et l'adresse email sont obligatoires." });
-    }
-
-    const db = readDB();
-    const apiKey = db.monerooSecretKey;
-    if (!apiKey) {
-      return res.status(400).json({ error: "La clé API de paiement Moneroo n'est pas encore configurée par l'administrateur de l'Académie." });
-    }
-
-    const paymentId = "pay-" + Date.now() + "-" + Math.random().toString(36).substring(2, 8).toUpperCase();
-
-    const host = req.get("host");
-    const protocol = req.secure || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
-    const baseUrl = `${protocol}://${host}`;
-
-    const returnUrl = `${baseUrl}/?payment_status=success&payment_id=${paymentId}`;
-    const cancelUrl = `${baseUrl}/?payment_status=cancel`;
-
-    if (!db.pendingPayments) {
-      db.pendingPayments = [];
-    }
-    const newPendingPayment = {
-      id: paymentId,
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      email: email.trim().toLowerCase(),
-      referredBy: referredBy ? referredBy.trim().toUpperCase() : undefined,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-      monerooId: ""
-    };
-    db.pendingPayments.push(newPendingPayment);
-    writeDB(db);
-
-    // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API
-    let xofAmount = 28750; // default fallback ($50 * ~575)
-    const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
-    if (rateApiKey) {
-      try {
-        const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/50`);
-        if (rateRes.ok) {
-          const rateData: any = await rateRes.json();
-          if (rateData && rateData.conversion_result) {
-            xofAmount = Math.round(rateData.conversion_result);
-            console.log(`Converted $50 USD -> ${xofAmount} XOF (Rate: ${rateData.conversion_rate})`);
-          }
-        } else {
-          console.warn("ExchangeRate API response not OK, using default conversion:", rateRes.status);
-        }
-      } catch (err) {
-        console.error("ExchangeRate API conversion error, using fallback XOF amount:", err);
-      }
-    }
-
-    try {
-      const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-          "Accept": "application/json"
-        },
-        body: JSON.stringify({
-          amount: xofAmount,
-          currency: "XOF",
-          description: `Formation Ultime IA - ${firstName.trim()} ${lastName.trim()}`,
-          customer: {
-            first_name: firstName.trim(),
-            last_name: lastName.trim(),
-            email: email.trim().toLowerCase()
-          },
-          return_url: returnUrl,
-          cancel_url: cancelUrl,
-          metadata: {
-            paymentId: paymentId
-          }
-        })
-      });
-
-      const data: any = await response.json();
-      console.log("Moneroo Response:", data);
-
-      if (!response.ok) {
-        return res.status(response.status).json({
-          error: data.message || "Erreur lors de la création de la session de paiement chez Moneroo."
-        });
-      }
-
-      const monerooId = data.id || (data.data && data.data.id) || "";
-      if (monerooId) {
-        const dbCurrent = readDB();
-        if (dbCurrent.pendingPayments) {
-          const idx = dbCurrent.pendingPayments.findIndex(p => p.id === paymentId);
-          if (idx !== -1) {
-            dbCurrent.pendingPayments[idx].monerooId = monerooId;
-            writeDB(dbCurrent);
-          }
-        }
-      }
-
-      const checkoutUrl = (data.data && data.data.checkout_url) ||
-                          data.checkout_url || 
-                          data.payment_url || 
-                          data.redirect_url || 
-                          data.url;
-
-      if (!checkoutUrl) {
-        return res.status(500).json({
-          error: "Aucune URL de redirection de paiement n'a été renvoyée par Moneroo."
-        });
-      }
-
-      res.json({
-        success: true,
-        paymentId,
-        checkoutUrl
-      });
-
-    } catch (err: any) {
-      console.error("Error connecting to Moneroo:", err);
-      res.status(500).json({ error: "Impossible de contacter la passerelle de paiement Moneroo: " + err.message });
-    }
-  });
-
-  // API: Verify payment status and generate access code if successful
-  app.post("/api/payments/verify", async (req, res) => {
-    const { paymentId } = req.body;
-    if (!paymentId) {
-      return res.status(400).json({ error: "ID de paiement manquant." });
-    }
-
-    const db = readDB();
-    if (!db.pendingPayments) db.pendingPayments = [];
-    const paymentIdx = db.pendingPayments.findIndex(p => p.id === paymentId);
-    if (paymentIdx === -1) {
-      return res.status(404).json({ error: "Transaction introuvable." });
-    }
-
-    const payment = db.pendingPayments[paymentIdx];
-
-    if (payment.status === "completed" && payment.generatedCode) {
-      const foundCode = db.codes.find(c => c.code === payment.generatedCode);
-      if (foundCode) {
-        return res.json({
-          success: true,
-          code: foundCode.code,
-          profile: {
-            code: foundCode.code,
-            referralCode: foundCode.referralCode || "",
-            firstName: foundCode.firstName || payment.firstName,
-            lastName: foundCode.lastName || payment.lastName,
-            email: foundCode.email || payment.email,
-            referralBalance: foundCode.referralBalance || 0,
-            referredBy: foundCode.referredBy || "",
-            usdtAddress: foundCode.usdtAddress || "",
-            withdrawals: foundCode.withdrawals || []
-          }
-        });
-      }
-    }
-
-    const apiKey = db.monerooSecretKey;
-    let isApproved = false;
-
-    if (apiKey && payment.monerooId) {
-      try {
-        const response = await fetch(`https://api.moneroo.io/v1/payments/${payment.monerooId}`, {
-          headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Accept": "application/json"
-          }
-        });
-        if (response.ok) {
-          const data: any = await response.json();
-          const paymentData = data.data || data;
-          const status = paymentData.status;
-          isApproved = ["approved", "success", "successful", "completed", "paid"].includes(String(status).toLowerCase());
-        }
-      } catch (err) {
-        console.error("Error verifying payment with Moneroo API:", err);
-      }
-    } else {
-      if (!apiKey) {
-        return res.status(400).json({ error: "La passerelle de paiement n'est pas configurée." });
-      }
-    }
-
-    if (isApproved) {
-      const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-      let newCode = "IA-";
-      for (let i = 0; i < 8; i++) {
-        if (i === 4) newCode += "-";
-        newCode += characters.charAt(Math.floor(Math.random() * characters.length));
-      }
-
-      let newReferralCode = "REF-";
-      for (let i = 0; i < 8; i++) {
-        if (i === 4) newReferralCode += "-";
-        newReferralCode += characters.charAt(Math.floor(Math.random() * characters.length));
-      }
-
-      let validReferrerCode = "";
-      if (payment.referredBy) {
-        const cleanRef = payment.referredBy.trim().toUpperCase();
-        const referrerIdx = db.codes.findIndex(c => c.referralCode?.trim().toUpperCase() === cleanRef);
-        if (referrerIdx !== -1) {
-          validReferrerCode = db.codes[referrerIdx].referralCode || "";
-          db.codes[referrerIdx].referralBalance = (db.codes[referrerIdx].referralBalance || 0) + 5;
-        }
-      }
-
-      const newAccessCode: AccessCode = {
-        code: newCode,
-        referralCode: newReferralCode,
-        deviceLock: null,
-        isPaid: true,
-        createdAt: new Date().toISOString(),
-        firstName: payment.firstName,
-        lastName: payment.lastName,
-        email: payment.email,
-        referralBalance: 0,
-        referredBy: validReferrerCode || undefined,
-        withdrawals: []
-      };
-
-      db.codes.push(newAccessCode);
-      
-      payment.status = "completed";
-      payment.generatedCode = newCode;
-      
-      db.pendingPayments[paymentIdx] = payment;
-      writeDB(db);
-
-      return res.json({
-        success: true,
-        code: newCode,
-        profile: {
-          code: newCode,
-          referralCode: newReferralCode,
-          firstName: payment.firstName,
-          lastName: payment.lastName,
-          email: payment.email,
-          referralBalance: 0,
-          referredBy: validReferrerCode,
-          usdtAddress: "",
-          withdrawals: []
-        }
-      });
-    } else {
-      return res.status(400).json({
-        error: "Le paiement n'a pas encore été validé ou a échoué chez Moneroo. Veuillez réessayer."
-      });
-    }
-  });
-
-  // API: Moneroo Webhook
-  app.post("/api/payments/webhook", (req, res) => {
-    console.log("Moneroo Webhook body:", req.body);
-    const event = req.body;
-    if (!event) return res.status(400).send("No event body.");
-
-    const paymentData = event.data || event;
-    const monerooId = paymentData.id;
-    const metadata = paymentData.metadata || {};
-    const paymentId = metadata.paymentId;
-
-    if (!paymentId && !monerooId) {
-      return res.status(400).send("No identifier found.");
-    }
-
-    const db = readDB();
-    if (!db.pendingPayments) db.pendingPayments = [];
-
-    const idx = db.pendingPayments.findIndex(p => p.id === paymentId || p.monerooId === monerooId);
-    if (idx === -1) {
-      return res.status(404).send("Transaction not found.");
-    }
-
-    const payment = db.pendingPayments[idx];
-    if (payment.status === "completed") {
-      return res.send({ success: true, message: "Payment already fulfilled." });
-    }
-
-    const status = paymentData.status;
-    const isApproved = ["approved", "success", "successful", "completed", "paid"].includes(String(status).toLowerCase());
-
-    if (isApproved) {
-      const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-      let newCode = "IA-";
-      for (let i = 0; i < 8; i++) {
-        if (i === 4) newCode += "-";
-        newCode += characters.charAt(Math.floor(Math.random() * characters.length));
-      }
-
-      let newReferralCode = "REF-";
-      for (let i = 0; i < 8; i++) {
-        if (i === 4) newReferralCode += "-";
-        newReferralCode += characters.charAt(Math.floor(Math.random() * characters.length));
-      }
-
-      let validReferrerCode = "";
-      if (payment.referredBy) {
-        const cleanRef = payment.referredBy.trim().toUpperCase();
-        const referrerIdx = db.codes.findIndex(c => c.referralCode?.trim().toUpperCase() === cleanRef);
-        if (referrerIdx !== -1) {
-          validReferrerCode = db.codes[referrerIdx].referralCode || "";
-          db.codes[referrerIdx].referralBalance = (db.codes[referrerIdx].referralBalance || 0) + 5;
-        }
-      }
-
-      const newAccessCode: AccessCode = {
-        code: newCode,
-        referralCode: newReferralCode,
-        deviceLock: null,
-        isPaid: true,
-        createdAt: new Date().toISOString(),
-        firstName: payment.firstName,
-        lastName: payment.lastName,
-        email: payment.email,
-        referralBalance: 0,
-        referredBy: validReferrerCode || undefined,
-        withdrawals: []
-      };
-
-      db.codes.push(newAccessCode);
-      
-      payment.status = "completed";
-      payment.generatedCode = newCode;
-      
-      db.pendingPayments[idx] = payment;
-      writeDB(db);
-
-      console.log(`Webhook generated code ${newCode} successfully.`);
-      return res.json({ success: true, message: "Code generated." });
-    }
-
-    res.send({ success: true, message: "Webhook received but not approved." });
-  });
-
-  // API: Admin Update Settings
-  app.post("/api/admin/settings", checkAdmin, (req, res) => {
-    const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath } = req.body;
-    const db = readDB();
-    db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
-    db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
-    if (exchangeRateApiKey !== undefined) db.exchangeRateApiKey = exchangeRateApiKey.trim();
-    db.telegramLink = telegramLink ? telegramLink.trim() : "";
-    db.whatsappLink = whatsappLink ? whatsappLink.trim() : "";
-    db.presentationVideoUrl = presentationVideoUrl ? presentationVideoUrl.trim() : "";
-    db.presentationVideoPath = presentationVideoPath !== undefined ? presentationVideoPath.trim() : "";
-    writeDB(db);
-    res.json({ success: true, message: "Configuration mise à jour avec succès !" });
-  });
-
-  // API: Get Profile details
-  app.post("/api/profile", (req, res) => {
-    const { code, deviceId } = req.body;
-    if (!code || !deviceId) {
-      return res.status(400).json({ error: "Code et identifiant d'appareil requis." });
-    }
-
-    const db = readDB();
-    const foundCode = db.codes.find(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
-
-    if (!foundCode) {
-      return res.status(404).json({ error: "Code d'accès introuvable." });
-    }
-
-    if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
-      return res.status(403).json({ error: "Cet appareil n'est pas autorisé pour ce code d'accès." });
-    }
-
-    res.json({
-      success: true,
-      profile: {
-        code: foundCode.code,
-        referralCode: foundCode.referralCode || "",
-        firstName: foundCode.firstName || "Étudiant",
-        lastName: foundCode.lastName || "Élite",
-        email: foundCode.email || "etudiant@aiwebacademy.com",
-        referralBalance: foundCode.referralBalance || 0,
-        referredBy: foundCode.referredBy || "",
-        usdtAddress: foundCode.usdtAddress || "",
-        withdrawals: foundCode.withdrawals || []
-      }
+  } else {
+    return res.status(400).json({
+      error: "Le paiement n'a pas encore été validé ou a échoué chez Moneroo. Veuillez réessayer."
     });
-  });
+  }
+});
 
-  // API: Update USDT Withdrawal Address
-  app.post("/api/update-usdt-address", (req, res) => {
-    const { code, deviceId, usdtAddress } = req.body;
-    if (!code || !deviceId) {
-      return res.status(400).json({ error: "Code et identifiant d'appareil requis." });
-    }
-    if (!usdtAddress || !usdtAddress.trim()) {
-      return res.status(400).json({ error: "L'adresse de retrait USDT ne peut pas être vide." });
-    }
+// Moneroo Webhook
+apiRouter.post("/payments/webhook", async (req, res) => {
+  console.log("Moneroo Webhook body:", req.body);
+  const event = req.body;
+  if (!event) return res.status(400).send("No event body.");
 
-    const db = readDB();
-    const codeIndex = db.codes.findIndex(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+  const paymentData = event.data || event;
+  const monerooId = paymentData.id;
+  const metadata = paymentData.metadata || {};
+  const paymentId = metadata.paymentId;
 
-    if (codeIndex === -1) {
-      return res.status(404).json({ error: "Code d'accès introuvable." });
-    }
+  if (!paymentId && !monerooId) {
+    return res.status(400).send("No identifier found.");
+  }
 
-    const foundCode = db.codes[codeIndex];
-    if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
-      return res.status(403).json({ error: "Cet appareil n'est pas autorisé pour ce code d'accès." });
-    }
+  const db = readDB();
+  if (!db.pendingPayments) db.pendingPayments = [];
 
-    foundCode.usdtAddress = usdtAddress.trim();
-    db.codes[codeIndex] = foundCode;
-    writeDB(db);
+  const idx = db.pendingPayments.findIndex(p => p.id === paymentId || p.monerooId === monerooId);
+  if (idx === -1) {
+    return res.status(404).send("Transaction not found.");
+  }
 
-    res.json({
-      success: true,
-      message: "Adresse de retrait USDT enregistrée avec succès !",
-      profile: {
-        code: foundCode.code,
-        referralCode: foundCode.referralCode || "",
-        firstName: foundCode.firstName || "Étudiant",
-        lastName: foundCode.lastName || "Élite",
-        email: foundCode.email || "etudiant@aiwebacademy.com",
-        referralBalance: foundCode.referralBalance || 0,
-        referredBy: foundCode.referredBy || "",
-        usdtAddress: foundCode.usdtAddress,
-        withdrawals: foundCode.withdrawals || []
-      }
-    });
-  });
+  const payment = db.pendingPayments[idx];
+  if (payment.status === "completed") {
+    return res.send({ success: true, message: "Payment already fulfilled." });
+  }
 
-  // API: Request withdrawal
-  app.post("/api/request-withdrawal", (req, res) => {
-    const { code, deviceId, amount, usdtAddress } = req.body;
-    if (!code || !deviceId || !amount || !usdtAddress) {
-      return res.status(400).json({ error: "Tous les champs sont requis." });
-    }
+  const status = paymentData.status;
+  const isApproved = ["approved", "success", "successful", "completed", "paid"].includes(String(status).toLowerCase());
 
-    const numericAmount = Number(amount);
-    if (isNaN(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ error: "Montant de retrait invalide." });
-    }
-
-    const db = readDB();
-    const codeIndex = db.codes.findIndex(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
-
-    if (codeIndex === -1) {
-      return res.status(404).json({ error: "Code d'accès introuvable." });
-    }
-
-    const foundCode = db.codes[codeIndex];
-    if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
-      return res.status(403).json({ error: "Cet appareil n'est pas autorisé." });
-    }
-
-    const balance = foundCode.referralBalance || 0;
-    if (numericAmount < 50) {
-      return res.status(400).json({ error: "Le montant minimum de retrait est de 50 USDT ($50)." });
-    }
-
-    if (numericAmount > balance) {
-      return res.status(400).json({ error: `Solde insuffisant. Votre solde disponible est de $${balance}.` });
-    }
-
-    // Deduct and add withdrawal record
-    foundCode.referralBalance = balance - numericAmount;
-    if (!foundCode.withdrawals) {
-      foundCode.withdrawals = [];
-    }
-
-    const newWithdrawal = {
-      id: "wdr-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-      amount: numericAmount,
-      usdtAddress: usdtAddress.trim(),
-      status: "pending" as const,
-      createdAt: new Date().toISOString()
-    };
-
-    foundCode.withdrawals.push(newWithdrawal);
-    db.codes[codeIndex] = foundCode;
-    writeDB(db);
-
-    res.json({
-      success: true,
-      message: "Votre demande de retrait de " + numericAmount + " USDT a été soumise avec succès !",
-      profile: {
-        code: foundCode.code,
-        referralCode: foundCode.referralCode || "",
-        firstName: foundCode.firstName || "Étudiant",
-        lastName: foundCode.lastName || "Élite",
-        email: foundCode.email || "etudiant@aiwebacademy.com",
-        referralBalance: foundCode.referralBalance,
-        referredBy: foundCode.referredBy || "",
-        usdtAddress: foundCode.usdtAddress || "",
-        withdrawals: foundCode.withdrawals
-      }
-    });
-  });
-
-  // API: Get Admin Data (full details including all raw codes)
-  app.get("/api/admin/data", checkAdmin, (req, res) => {
-    const db = readDB();
-    res.json(db);
-  });
-
-  // API: Update Admin Password
-  app.post("/api/admin/change-password", checkAdmin, (req, res) => {
-    const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 3) {
-      return res.status(400).json({ error: "Le mot de passe doit faire au moins 3 caractères." });
-    }
-    const db = readDB();
-    db.adminPassword = newPassword;
-    writeDB(db);
-    res.json({ success: true, message: "Mot de passe administrateur mis à jour." });
-  });
-
-  // API: Admin generate a new code manually
-  app.post("/api/admin/generate-code", checkAdmin, (req, res) => {
-    const { isPaid, firstName, lastName, email } = req.body;
-    const db = readDB();
-    
+  if (isApproved) {
     const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let newCode = isPaid ? "IA-" : "ADM-";
+    let newCode = "IA-";
     for (let i = 0; i < 8; i++) {
       if (i === 4) newCode += "-";
       newCode += characters.charAt(Math.floor(Math.random() * characters.length));
     }
 
-    let referralCode = "REF-";
+    let newReferralCode = "REF-";
     for (let i = 0; i < 8; i++) {
-      if (i === 4) referralCode += "-";
-      referralCode += characters.charAt(Math.floor(Math.random() * characters.length));
+      if (i === 4) newReferralCode += "-";
+      newReferralCode += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+
+    let validReferrerCode = "";
+    if (payment.referredBy) {
+      const cleanRef = payment.referredBy.trim().toUpperCase();
+      const referrerIdx = db.codes.findIndex(c => c.referralCode?.trim().toUpperCase() === cleanRef);
+      if (referrerIdx !== -1) {
+        validReferrerCode = db.codes[referrerIdx].referralCode || "";
+        db.codes[referrerIdx].referralBalance = (db.codes[referrerIdx].referralBalance || 0) + 5;
+      }
     }
 
     const newAccessCode: AccessCode = {
       code: newCode,
-      referralCode: referralCode,
+      referralCode: newReferralCode,
       deviceLock: null,
-      isPaid: !!isPaid,
+      isPaid: true,
       createdAt: new Date().toISOString(),
-      firstName: firstName ? firstName.trim() : undefined,
-      lastName: lastName ? lastName.trim() : undefined,
-      email: email ? email.trim().toLowerCase() : undefined,
+      firstName: payment.firstName,
+      lastName: payment.lastName,
+      email: payment.email,
       referralBalance: 0,
+      referredBy: validReferrerCode || undefined,
       withdrawals: []
     };
 
     db.codes.push(newAccessCode);
-    writeDB(db);
-
-    res.json({ success: true, code: newAccessCode });
-  });
-
-  // API: Admin delete code
-  app.delete("/api/admin/codes/:code", checkAdmin, (req, res) => {
-    const { code } = req.params;
-    const db = readDB();
-    db.codes = db.codes.filter(c => c.code !== code);
-    writeDB(db);
-    res.json({ success: true, message: "Code d'accès supprimé." });
-  });
-
-  // API: Admin reset code deviceLock
-  app.post("/api/admin/codes/:code/reset", checkAdmin, (req, res) => {
-    const { code } = req.params;
-    const db = readDB();
-    const idx = db.codes.findIndex(c => c.code === code);
-    if (idx !== -1) {
-      db.codes[idx].deviceLock = null;
-      writeDB(db);
-      return res.json({ success: true, message: "L'appareil lié à ce code a été réinitialisé." });
-    }
-    res.status(404).json({ error: "Code introuvable." });
-  });
-
-  // API: Admin update user profile, balance, etc.
-  app.post("/api/admin/codes/:code/update-profile", checkAdmin, (req, res) => {
-    const { code } = req.params;
-    const { firstName, lastName, email, referralCode, referralBalance, usdtAddress } = req.body;
-    const db = readDB();
-    const idx = db.codes.findIndex(c => c.code === code);
-    if (idx !== -1) {
-      db.codes[idx].firstName = firstName;
-      db.codes[idx].lastName = lastName;
-      db.codes[idx].email = email;
-      db.codes[idx].referralCode = referralCode;
-      db.codes[idx].referralBalance = Number(referralBalance) || 0;
-      db.codes[idx].usdtAddress = usdtAddress;
-      writeDB(db);
-      return res.json({ success: true, message: "Profil utilisateur mis à jour.", code: db.codes[idx] });
-    }
-    res.status(404).json({ error: "Code introuvable." });
-  });
-
-  // API: Admin mark withdrawal as completed
-  app.post("/api/admin/codes/:code/withdrawals/:wdrId/complete", checkAdmin, (req, res) => {
-    const { code, wdrId } = req.params;
-    const db = readDB();
-    const idx = db.codes.findIndex(c => c.code === code);
-    if (idx !== -1) {
-      const withdrawals = db.codes[idx].withdrawals || [];
-      const wIdx = withdrawals.findIndex(w => w.id === wdrId);
-      if (wIdx !== -1) {
-        withdrawals[wIdx].status = "completed";
-        db.codes[idx].withdrawals = withdrawals;
-        writeDB(db);
-        return res.json({ success: true, message: "Demande de retrait marquée comme Payée/Complétée." });
-      }
-      return res.status(404).json({ error: "Demande de retrait introuvable." });
-    }
-    res.status(404).json({ error: "Code introuvable." });
-  });
-
-  // API: Admin cancel withdrawal and refund balance
-  app.post("/api/admin/codes/:code/withdrawals/:wdrId/cancel", checkAdmin, (req, res) => {
-    const { code, wdrId } = req.params;
-    const db = readDB();
-    const idx = db.codes.findIndex(c => c.code === code);
-    if (idx !== -1) {
-      const withdrawals = db.codes[idx].withdrawals || [];
-      const wIdx = withdrawals.findIndex(w => w.id === wdrId);
-      if (wIdx !== -1) {
-        const refundAmount = withdrawals[wIdx].amount;
-        // Refund the balance if the current status is pending
-        if (withdrawals[wIdx].status === "pending") {
-          db.codes[idx].referralBalance = (db.codes[idx].referralBalance || 0) + refundAmount;
-        }
-        // Remove withdrawal or mark it as cancelled (here let's filter it out or change status)
-        // Let's filter it out or we can just change its status or remove it. Let's remove it to keep clean.
-        db.codes[idx].withdrawals = withdrawals.filter(w => w.id !== wdrId);
-        writeDB(db);
-        return res.json({ success: true, message: "Demande annulée et montant remboursé au solde de l'étudiant." });
-      }
-      return res.status(404).json({ error: "Demande de retrait introuvable." });
-    }
-    res.status(404).json({ error: "Code introuvable." });
-  });
-
-  // API: Admin create or edit season
-  app.post("/api/admin/seasons", checkAdmin, (req, res) => {
-    const { id, title, description } = req.body;
-    if (!title) {
-      return res.status(400).json({ error: "Le titre de la saison est obligatoire." });
-    }
-
-    const db = readDB();
-    if (id) {
-      // Edit existing
-      const idx = db.seasons.findIndex(s => s.id === id);
-      if (idx !== -1) {
-        db.seasons[idx] = { id, title, description };
-      } else {
-        db.seasons.push({ id, title, description });
-      }
-    } else {
-      // New season
-      const newId = String(db.seasons.length > 0 ? Math.max(...db.seasons.map(s => Number(s.id))) + 1 : 1);
-      db.seasons.push({ id: newId, title, description });
-    }
-    writeDB(db);
-    res.json({ success: true, seasons: db.seasons });
-  });
-
-  // API: Admin delete season
-  app.delete("/api/admin/seasons/:id", checkAdmin, (req, res) => {
-    const { id } = req.params;
-    const db = readDB();
-    db.seasons = db.seasons.filter(s => s.id !== id);
-    // Also delete or orphan episodes in this season
-    db.episodes = db.episodes.filter(ep => ep.seasonId !== id);
-    writeDB(db);
-    res.json({ success: true, message: "Saison supprimée ainsi que tous ses épisodes." });
-  });
-
-  // API: Admin upload video & create episode
-  app.post("/api/admin/episodes", checkAdmin, upload.single("videoFile"), async (req, res) => {
-    const { seasonId, title, description, duration } = req.body;
-    if (!seasonId || !title) {
-      return res.status(400).json({ error: "La saison et le titre de l'épisode sont obligatoires." });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({ error: "Fichier vidéo manquant." });
-    }
-
-    try {
-      const finalVideoPath = await uploadToBlobIfNeeded(req.file);
-      const db = readDB();
-      const newEpisode: Episode = {
-        id: "ep-" + Date.now(),
-        seasonId,
-        title,
-        description: description || "",
-        videoPath: finalVideoPath,
-        originalName: req.file.originalname,
-        duration: duration || "00:00",
-        createdAt: new Date().toISOString()
-      };
-
-      db.episodes.push(newEpisode);
-      writeDB(db);
-
-      res.json({ success: true, episode: newEpisode });
-    } catch (err) {
-      console.error("Error creating episode:", err);
-      res.status(500).json({ error: "Erreur lors de la création de l'épisode." });
-    }
-  });
-
-  // API: Admin delete episode
-  app.delete("/api/admin/episodes/:id", checkAdmin, (req, res) => {
-    const { id } = req.params;
-    const db = readDB();
-    const episode = db.episodes.find(ep => ep.id === id);
-    if (episode) {
-      const filePath = path.join(UPLOADS_DIR, episode.videoPath);
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-        } catch (e) {
-          console.error("Failed to delete video file from disk:", e);
-        }
-      }
-      db.episodes = db.episodes.filter(ep => ep.id !== id);
-      writeDB(db);
-      return res.json({ success: true, message: "Épisode et fichier vidéo supprimés." });
-    }
-    res.status(404).json({ error: "Épisode introuvable." });
-  });
-
-  // API: Admin upload custom presentation video
-  app.post("/api/admin/presentation-video", checkAdmin, upload.single("videoFile"), async (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: "Fichier vidéo manquant." });
-    }
-    try {
-      const finalVideoPath = await uploadToBlobIfNeeded(req.file);
-      const db = readDB();
-      db.presentationVideoPath = finalVideoPath;
-      writeDB(db);
-      res.json({ success: true, presentationVideoPath: finalVideoPath });
-    } catch (err) {
-      console.error("Error setting presentation video:", err);
-      res.status(500).json({ error: "Erreur lors du traitement de la vidéo de présentation." });
-    }
-  });
-
-  // API: Public stream for presentation video with HTTP 206 Support (No auth needed)
-  app.get("/api/public-video/:filename", (req, res) => {
-    const { filename } = req.params;
     
-    // Security check: Only stream the video if it is currently set as the presentation video
+    payment.status = "completed";
+    payment.generatedCode = newCode;
+    
+    db.pendingPayments[idx] = payment;
+    await writeDB(db);
+
+    console.log(`Webhook generated code ${newCode} successfully.`);
+    return res.json({ success: true, message: "Code generated." });
+  }
+
+  res.send({ success: true, message: "Webhook received but not approved." });
+});
+
+// Admin Update Settings
+apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
+  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath } = req.body;
+  const db = readDB();
+  db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
+  db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
+  if (exchangeRateApiKey !== undefined) db.exchangeRateApiKey = exchangeRateApiKey.trim();
+  db.telegramLink = telegramLink ? telegramLink.trim() : "";
+  db.whatsappLink = whatsappLink ? whatsappLink.trim() : "";
+  db.presentationVideoUrl = presentationVideoUrl ? presentationVideoUrl.trim() : "";
+  db.presentationVideoPath = presentationVideoPath !== undefined ? presentationVideoPath.trim() : "";
+  await writeDB(db);
+  res.json({ success: true, message: "Configuration mise à jour avec succès !" });
+});
+
+// Get Profile details
+apiRouter.post("/profile", (req, res) => {
+  const { code, deviceId } = req.body;
+  if (!code || !deviceId) {
+    return res.status(400).json({ error: "Code et identifiant d'appareil requis." });
+  }
+
+  const db = readDB();
+  const foundCode = db.codes.find(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+
+  if (!foundCode) {
+    return res.status(404).json({ error: "Code d'accès introuvable." });
+  }
+
+  if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
+    return res.status(403).json({ error: "Cet appareil n'est pas autorisé pour ce code d'accès." });
+  }
+
+  res.json({
+    success: true,
+    profile: {
+      code: foundCode.code,
+      referralCode: foundCode.referralCode || "",
+      firstName: foundCode.firstName || "Étudiant",
+      lastName: foundCode.lastName || "Élite",
+      email: foundCode.email || "etudiant@aiwebacademy.com",
+      referralBalance: foundCode.referralBalance || 0,
+      referredBy: foundCode.referredBy || "",
+      usdtAddress: foundCode.usdtAddress || "",
+      withdrawals: foundCode.withdrawals || []
+    }
+  });
+});
+
+// Student update USDT payout address
+apiRouter.post("/update-usdt-address", async (req, res) => {
+  const { code, deviceId, usdtAddress } = req.body;
+  if (!code || !deviceId || !usdtAddress) {
+    return res.status(400).json({ error: "Code, identifiant d'appareil et adresse USDT requis." });
+  }
+
+  const db = readDB();
+  const codeIndex = db.codes.findIndex(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+
+  if (codeIndex === -1) {
+    return res.status(404).json({ error: "Code d'accès introuvable." });
+  }
+
+  const foundCode = db.codes[codeIndex];
+  if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
+    return res.status(403).json({ error: "Appareil non autorisé pour modifier cette adresse." });
+  }
+
+  foundCode.usdtAddress = usdtAddress.trim();
+  db.codes[codeIndex] = foundCode;
+  await writeDB(db);
+
+  res.json({
+    success: true,
+    message: "Adresse USDT enregistrée avec succès !",
+    usdtAddress: foundCode.usdtAddress
+  });
+});
+
+// Student Request USDT Withdrawal
+apiRouter.post("/request-withdrawal", async (req, res) => {
+  const { code, deviceId, amount } = req.body;
+  if (!code || !deviceId || !amount) {
+    return res.status(400).json({ error: "Tous les champs sont requis pour la demande de retrait." });
+  }
+
+  const db = readDB();
+  const codeIndex = db.codes.findIndex(c => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+
+  if (codeIndex === -1) {
+    return res.status(404).json({ error: "Code d'accès introuvable." });
+  }
+
+  const foundCode = db.codes[codeIndex];
+  if (foundCode.deviceLock && foundCode.deviceLock !== deviceId) {
+    return res.status(403).json({ error: "Appareil non autorisé." });
+  }
+
+  const withdrawAmount = Number(amount);
+  if (isNaN(withdrawAmount) || withdrawAmount < 10) {
+    return res.status(400).json({ error: "Le montant minimum de retrait est de $10 USDT." });
+  }
+
+  const currentBalance = foundCode.referralBalance || 0;
+  if (withdrawAmount > currentBalance) {
+    return res.status(400).json({ error: `Solde insuffisant. Votre solde disponible est de $${currentBalance} USDT.` });
+  }
+
+  if (!foundCode.usdtAddress || !foundCode.usdtAddress.trim()) {
+    return res.status(400).json({ error: "Veuillez d'abord renseigner votre adresse de portefeuille USDT TRC20/BEP20." });
+  }
+
+  // Deduct balance and record withdrawal request
+  foundCode.referralBalance = currentBalance - withdrawAmount;
+  
+  if (!foundCode.withdrawals) foundCode.withdrawals = [];
+  const newWithdrawal = {
+    id: "wdr-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6).toUpperCase(),
+    amount: withdrawAmount,
+    usdtAddress: foundCode.usdtAddress,
+    status: "pending" as const,
+    createdAt: new Date().toISOString()
+  };
+
+  foundCode.withdrawals.push(newWithdrawal);
+  db.codes[codeIndex] = foundCode;
+  await writeDB(db);
+
+  res.json({
+    success: true,
+    message: "Demande de retrait soumise avec succès ! Elle sera traitée sous 24h à 48h.",
+    referralBalance: foundCode.referralBalance,
+    withdrawals: foundCode.withdrawals
+  });
+});
+
+// Admin Data
+apiRouter.get("/admin/data", checkAdmin, (req, res) => {
+  const db = readDB();
+  res.json({
+    codes: db.codes,
+    seasons: db.seasons,
+    episodes: db.episodes,
+    monerooSecretKey: db.monerooSecretKey || "",
+    monerooPublicKey: db.monerooPublicKey || "",
+    exchangeRateApiKey: db.exchangeRateApiKey || "",
+    telegramLink: db.telegramLink || "https://t.me/ai_academy_fit",
+    whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
+    presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
+    presentationVideoPath: db.presentationVideoPath || "",
+    pendingPayments: db.pendingPayments || []
+  });
+});
+
+// Admin Change Password
+apiRouter.post("/admin/change-password", checkAdmin, async (req, res) => {
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.trim().length < 4) {
+    return res.status(400).json({ error: "Le mot de passe doit contenir au moins 4 caractères." });
+  }
+  const db = readDB();
+  db.adminPassword = newPassword;
+  await writeDB(db);
+  res.json({ success: true, message: "Mot de passe administrateur mis à jour." });
+});
+
+// Admin Generate Access Code
+apiRouter.post("/admin/generate-code", checkAdmin, async (req, res) => {
+  const { firstName, lastName, email } = req.body;
+  const db = readDB();
+
+  const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let newAccessCode = "IA-";
+  for (let i = 0; i < 8; i++) {
+    if (i === 4) newAccessCode += "-";
+    newAccessCode += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  let newReferralCode = "REF-";
+  for (let i = 0; i < 8; i++) {
+    if (i === 4) newReferralCode += "-";
+    newReferralCode += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  const newCode: AccessCode = {
+    code: newAccessCode,
+    referralCode: newReferralCode,
+    deviceLock: null,
+    isPaid: true,
+    createdAt: new Date().toISOString(),
+    firstName: firstName ? firstName.trim() : "Étudiant",
+    lastName: lastName ? lastName.trim() : "Manuel",
+    email: email ? email.trim().toLowerCase() : "manuel@aiwebacademy.com",
+    referralBalance: 0,
+    withdrawals: []
+  };
+
+  db.codes.push(newCode);
+  await writeDB(db);
+
+  res.json({ success: true, code: newCode });
+});
+
+// Admin Delete Code
+apiRouter.delete("/admin/codes/:code", checkAdmin, async (req, res) => {
+  const { code } = req.params;
+  const db = readDB();
+  db.codes = db.codes.filter(c => c.code !== code);
+  await writeDB(db);
+  res.json({ success: true, message: "Code d'accès supprimé." });
+});
+
+// Admin Reset Device Lock
+apiRouter.post("/admin/codes/:code/reset", checkAdmin, async (req, res) => {
+  const { code } = req.params;
+  const db = readDB();
+  const idx = db.codes.findIndex(c => c.code === code);
+  if (idx !== -1) {
+    db.codes[idx].deviceLock = null;
+    await writeDB(db);
+    return res.json({ success: true, message: "L'appareil lié à ce code a été réinitialisé." });
+  }
+  res.status(404).json({ error: "Code introuvable." });
+});
+
+// Admin Update User Profile & Referral Balance
+apiRouter.post("/admin/codes/:code/update-profile", checkAdmin, async (req, res) => {
+  const { code } = req.params;
+  const { firstName, lastName, email, referralBalance, usdtAddress } = req.body;
+  const db = readDB();
+  const idx = db.codes.findIndex(c => c.code === code);
+  if (idx !== -1) {
+    db.codes[idx].firstName = firstName;
+    db.codes[idx].lastName = lastName;
+    db.codes[idx].email = email;
+    db.codes[idx].referralBalance = Number(referralBalance) || 0;
+    db.codes[idx].usdtAddress = usdtAddress;
+    await writeDB(db);
+    return res.json({ success: true, message: "Profil utilisateur mis à jour.", code: db.codes[idx] });
+  }
+  res.status(404).json({ error: "Code introuvable." });
+});
+
+// Admin Mark Withdrawal Completed
+apiRouter.post("/admin/codes/:code/withdrawals/:wdrId/complete", checkAdmin, async (req, res) => {
+  const { code, wdrId } = req.params;
+  const db = readDB();
+  const idx = db.codes.findIndex(c => c.code === code);
+  if (idx !== -1) {
+    const withdrawals = db.codes[idx].withdrawals || [];
+    const wIdx = withdrawals.findIndex(w => w.id === wdrId);
+    if (wIdx !== -1) {
+      withdrawals[wIdx].status = "completed";
+      db.codes[idx].withdrawals = withdrawals;
+      await writeDB(db);
+      return res.json({ success: true, message: "Demande de retrait marquée comme Payée/Complétée." });
+    }
+  }
+  res.status(404).json({ error: "Demande de retrait introuvable." });
+});
+
+// Admin Cancel Withdrawal and Refund Balance
+apiRouter.post("/admin/codes/:code/withdrawals/:wdrId/cancel", checkAdmin, async (req, res) => {
+  const { code, wdrId } = req.params;
+  const db = readDB();
+  const idx = db.codes.findIndex(c => c.code === code);
+  if (idx !== -1) {
+    const withdrawals = db.codes[idx].withdrawals || [];
+    const wObj = withdrawals.find(w => w.id === wdrId);
+    if (wObj && wObj.status === "pending") {
+      // Refund amount
+      db.codes[idx].referralBalance = (db.codes[idx].referralBalance || 0) + wObj.amount;
+      db.codes[idx].withdrawals = withdrawals.filter(w => w.id !== wdrId);
+      await writeDB(db);
+      return res.json({ success: true, message: "Demande annulée et montant remboursé au solde de l'étudiant." });
+    }
+  }
+  res.status(404).json({ error: "Demande introuvable ou déjà traitée." });
+});
+
+// Admin Create/Update Season
+apiRouter.post("/admin/seasons", checkAdmin, async (req, res) => {
+  const { id, title, description } = req.body;
+  if (!title || !description) {
+    return res.status(400).json({ error: "Titre et description requis." });
+  }
+  const db = readDB();
+  if (id) {
+    const idx = db.seasons.findIndex(s => s.id === id);
+    if (idx !== -1) {
+      db.seasons[idx] = { id, title, description };
+    } else {
+      db.seasons.push({ id, title, description });
+    }
+  } else {
+    const newId = String(Date.now());
+    db.seasons.push({ id: newId, title, description });
+  }
+  await writeDB(db);
+  res.json({ success: true, seasons: db.seasons });
+});
+
+// Admin Delete Season
+apiRouter.delete("/admin/seasons/:id", checkAdmin, async (req, res) => {
+  const { id } = req.params;
+  const db = readDB();
+  db.seasons = db.seasons.filter(s => s.id !== id);
+  db.episodes = db.episodes.filter(ep => ep.seasonId !== id);
+  await writeDB(db);
+  res.json({ success: true, message: "Saison supprimée ainsi que tous ses épisodes." });
+});
+
+// Admin Create Episode (Support Vercel Blob or local storage)
+apiRouter.post("/admin/episodes", checkAdmin, upload.single("videoFile"), async (req, res) => {
+  const { seasonId, title, description, videoUrl, duration } = req.body;
+  
+  if (!seasonId || !title) {
+    return res.status(400).json({ error: "Saison et titre sont obligatoires." });
+  }
+
+  let finalVideoPath = "";
+  let originalName = "";
+
+  if (req.file) {
+    originalName = req.file.originalname;
+    finalVideoPath = await uploadToBlobIfNeeded(req.file);
+  } else if (videoUrl) {
+    finalVideoPath = videoUrl.trim();
+    originalName = "External Video";
+  } else {
+    return res.status(400).json({ error: "Veuillez uploader un fichier vidéo ou fournir une URL." });
+  }
+
+  const db = readDB();
+  const newEpisode: Episode = {
+    id: String(Date.now()),
+    seasonId,
+    title: title.trim(),
+    description: description ? description.trim() : "",
+    videoPath: finalVideoPath,
+    originalName,
+    duration: duration ? duration.trim() : undefined,
+    createdAt: new Date().toISOString()
+  };
+
+  db.episodes.push(newEpisode);
+  await writeDB(db);
+
+  res.json({ success: true, episode: newEpisode });
+});
+
+// Admin Delete Episode
+apiRouter.delete("/admin/episodes/:id", checkAdmin, async (req, res) => {
+  const { id } = req.params;
+  const db = readDB();
+  const episode = db.episodes.find(ep => ep.id === id);
+  if (episode) {
+    const filePath = path.join(UPLOADS_DIR, episode.videoPath);
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (e) {
+        console.error("Failed to delete video file from disk:", e);
+      }
+    }
+    db.episodes = db.episodes.filter(ep => ep.id !== id);
+    await writeDB(db);
+    return res.json({ success: true, message: "Épisode et fichier vidéo supprimés." });
+  }
+  res.status(404).json({ error: "Épisode introuvable." });
+});
+
+// Admin upload custom presentation video
+apiRouter.post("/admin/presentation-video", checkAdmin, upload.single("videoFile"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "Fichier vidéo manquant." });
+  }
+  try {
+    const finalVideoPath = await uploadToBlobIfNeeded(req.file);
     const db = readDB();
-    if (db.presentationVideoPath !== filename) {
-      return res.status(403).send("Accès refusé. Cette vidéo n'est pas configurée comme vidéo de présentation.");
+    db.presentationVideoPath = finalVideoPath;
+    await writeDB(db);
+    res.json({ success: true, presentationVideoPath: finalVideoPath });
+  } catch (err) {
+    console.error("Error setting presentation video:", err);
+    res.status(500).json({ error: "Erreur lors du traitement de la vidéo de présentation." });
+  }
+});
+
+// Public stream for presentation video
+apiRouter.get("/public-video/:filename", (req, res) => {
+  const { filename } = req.params;
+  
+  const db = readDB();
+  if (db.presentationVideoPath !== filename) {
+    return res.status(403).send("Accès refusé. Cette vidéo n'est pas configurée comme vidéo de présentation.");
+  }
+
+  const videoFilePath = path.join(UPLOADS_DIR, filename);
+  if (!fs.existsSync(videoFilePath)) {
+    return res.status(404).send("Fichier vidéo introuvable sur le serveur.");
+  }
+
+  const stat = fs.statSync(videoFilePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+    if (start >= fileSize) {
+      res.status(416).send("Requested range not satisfiable\n" + start + " >= " + fileSize);
+      return;
     }
 
-    const videoFilePath = path.join(UPLOADS_DIR, filename);
-    if (!fs.existsSync(videoFilePath)) {
-      return res.status(404).send("Fichier vidéo introuvable sur le serveur.");
-    }
+    const chunksize = (end - start) + 1;
+    const file = fs.createReadStream(videoFilePath, { start, end });
+    const head = {
+      "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": chunksize,
+      "Content-Type": "video/mp4",
+    };
 
-    const stat = fs.statSync(videoFilePath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
+    res.writeHead(206, head);
+    file.pipe(res);
+  } else {
+    const head = {
+      "Content-Length": fileSize,
+      "Content-Type": "video/mp4",
+    };
+    res.writeHead(200, head);
+    fs.createReadStream(videoFilePath).pipe(res);
+  }
+});
 
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+// Proxy Stream for Cloud-Stored Videos
+apiRouter.get("/videos/proxy", async (req, res) => {
+  const { url, code, deviceId } = req.query;
 
-      if (start >= fileSize) {
-        res.status(416).send("Requested range not satisfiable\n" + start + " >= " + fileSize);
-        return;
-      }
+  if (!url || !code || !deviceId) {
+    return res.status(401).json({ error: "Paramètres manquants pour lire la vidéo." });
+  }
 
-      const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(videoFilePath, { start, end });
-      const head = {
-        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-        "Accept-Ranges": "bytes",
-        "Content-Length": chunksize,
-        "Content-Type": "video/mp4",
-      };
+  const verification = isCodeValid(code as string, deviceId as string);
+  if (!verification.valid) {
+    return res.status(403).json({ error: verification.error });
+  }
 
-      res.writeHead(206, head);
-      file.pipe(res);
+  const targetUrl = decodeURIComponent(url as string);
+
+  const headers: Record<string, string> = {};
+  if (req.headers.range) {
+    headers["Range"] = req.headers.range;
+  }
+
+  try {
+    const response = await fetch(targetUrl, { headers });
+    
+    const contentType = response.headers.get("content-type") || "video/mp4";
+    const contentRange = response.headers.get("content-range");
+    const contentLength = response.headers.get("content-length");
+    const acceptRanges = response.headers.get("accept-ranges") || "bytes";
+
+    res.status(response.status);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Accept-Ranges", acceptRanges);
+    if (contentRange) res.setHeader("Content-Range", contentRange);
+    if (contentLength) res.setHeader("Content-Length", contentLength);
+
+    if (response.body) {
+      const nodeReadable = Readable.fromWeb(response.body as any);
+      nodeReadable.pipe(res);
     } else {
-      const head = {
-        "Content-Length": fileSize,
-        "Content-Type": "video/mp4",
-      };
-      res.writeHead(200, head);
-      fs.createReadStream(videoFilePath).pipe(res);
+      res.end();
     }
-  });
+  } catch (err) {
+    console.error("Error proxying video stream:", err);
+    res.status(500).send("Erreur lors de la lecture du flux vidéo.");
+  }
+});
 
-  // API: Proxy Stream for Cloud-Stored Videos (Locked by code verification)
-  app.get("/api/videos/proxy", async (req, res) => {
-    const { url, code, deviceId } = req.query;
+// Stream Local Video
+apiRouter.get("/videos/:filename", (req, res) => {
+  const { filename } = req.params;
+  const { code, deviceId } = req.query;
 
-    if (!url || !code || !deviceId) {
-      return res.status(401).json({ error: "Paramètres manquants pour lire la vidéo." });
-    }
+  if (!code || !deviceId) {
+    return res.status(401).json({ error: "Veuillez fournir votre code d'accès et identifiant pour lire la vidéo." });
+  }
 
-    // Verify if code is valid and associated with this device
-    const verification = isCodeValid(code as string, deviceId as string);
-    if (!verification.valid) {
-      return res.status(403).json({ error: verification.error });
-    }
+  const verification = isCodeValid(code as string, deviceId as string);
+  if (!verification.valid) {
+    return res.status(403).json({ error: verification.error });
+  }
 
-    const targetUrl = decodeURIComponent(url as string);
+  const videoFilePath = path.join(UPLOADS_DIR, filename);
+  if (!fs.existsSync(videoFilePath)) {
+    return res.status(404).send("Fichier vidéo introuvable sur le serveur.");
+  }
 
-    // Forward the client's Range header to Vercel Blob / Target URL
-    const headers: Record<string, string> = {};
-    if (req.headers.range) {
-      headers["Range"] = req.headers.range;
-    }
+  const stat = fs.statSync(videoFilePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
 
-    try {
-      const response = await fetch(targetUrl, { headers });
-      
-      const contentType = response.headers.get("content-type") || "video/mp4";
-      const contentRange = response.headers.get("content-range");
-      const contentLength = response.headers.get("content-length");
-      const acceptRanges = response.headers.get("accept-ranges") || "bytes";
+  if (range) {
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-      res.status(response.status);
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Accept-Ranges", acceptRanges);
-      if (contentRange) res.setHeader("Content-Range", contentRange);
-      if (contentLength) res.setHeader("Content-Length", contentLength);
-
-      if (response.body) {
-        const nodeReadable = Readable.fromWeb(response.body as any);
-        nodeReadable.pipe(res);
-      } else {
-        res.end();
-      }
-    } catch (err) {
-      console.error("Error proxying video stream:", err);
-      res.status(500).send("Erreur lors de la lecture du flux vidéo.");
-    }
-  });
-
-  // API: Stream Video with HTTP 206 Support (Locked by code verification)
-  app.get("/api/videos/:filename", (req, res) => {
-    const { filename } = req.params;
-    const { code, deviceId } = req.query;
-
-    if (!code || !deviceId) {
-      return res.status(401).json({ error: "Veuillez fournir votre code d'accès et identifiant pour lire la vidéo." });
+    if (start >= fileSize) {
+      res.status(416).send("Requested range not satisfiable\n" + start + " >= " + fileSize);
+      return;
     }
 
-    // Verify if code is valid and associated with this device
-    const verification = isCodeValid(code as string, deviceId as string);
-    if (!verification.valid) {
-      return res.status(403).json({ error: verification.error });
-    }
+    const chunksize = (end - start) + 1;
+    const file = fs.createReadStream(videoFilePath, { start, end });
+    const head = {
+      "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+      "Accept-Ranges": "bytes",
+      "Content-Length": chunksize,
+      "Content-Type": "video/mp4",
+    };
 
-    const videoFilePath = path.join(UPLOADS_DIR, filename);
-    if (!fs.existsSync(videoFilePath)) {
-      return res.status(404).send("Fichier vidéo introuvable sur le serveur.");
-    }
+    res.writeHead(206, head);
+    file.pipe(res);
+  } else {
+    const head = {
+      "Content-Length": fileSize,
+      "Content-Type": "video/mp4",
+    };
+    res.writeHead(200, head);
+    fs.createReadStream(videoFilePath).pipe(res);
+  }
+});
 
-    const stat = fs.statSync(videoFilePath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
+// Mount apiRouter on both /api and / to handle Vercel rewrites seamlessly
+app.use("/api", apiRouter);
+app.use("/", apiRouter);
 
-    if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-
-      if (start >= fileSize) {
-        res.status(416).send("Requested range not satisfiable\n" + start + " >= " + fileSize);
-        return;
-      }
-
-      const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(videoFilePath, { start, end });
-      const head = {
-        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-        "Accept-Ranges": "bytes",
-        "Content-Length": chunksize,
-        "Content-Type": "video/mp4",
-      };
-
-      res.writeHead(206, head);
-      file.pipe(res);
-    } else {
-      const head = {
-        "Content-Length": fileSize,
-        "Content-Type": "video/mp4",
-      };
-      res.writeHead(200, head);
-      fs.createReadStream(videoFilePath).pipe(res);
-    }
-  });
+async function startServer() {
+  await initPostgres();
+  const PORT = 3000;
 
   // Vite development integration or Production static server
   if (process.env.NODE_ENV !== "production") {
@@ -1457,9 +1394,11 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  if (process.env.NODE_ENV !== "production" || process.env.RUN_SERVER) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
 startServer();
