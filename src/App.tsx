@@ -354,11 +354,11 @@ export default function App() {
     if (paymentStatus === "success" && paymentId) {
       window.history.replaceState({}, document.title, window.location.pathname);
       verifyMonerooPayment(paymentId, storedDeviceId);
-    } else if (paymentStatus === "cancel") {
+    } else if (["cancel", "cancelled", "failed"].includes(paymentStatus || "")) {
       window.history.replaceState({}, document.title, window.location.pathname);
       setCustomAlert({
-        title: "Paiement Annulé",
-        message: "Vous avez annulé votre processus de paiement Moneroo. N'hésitez pas à réessayer quand vous le souhaitez."
+        title: "Paiement non finalisé",
+        message: "Votre paiement a été annulé ou n'a pas été finalisé chez Moneroo. Vous avez été réorienté vers l'Académie. Vous pouvez réessayer à tout moment."
       });
     }
 

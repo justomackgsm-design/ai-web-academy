@@ -38,22 +38,14 @@
   "presentationVideoUrl": "https://www.youtube.com/embed/8m9g_b95Eto",
   "pendingPayments": [
     {
-      "id": "pay-1784711412206-C0LYWM",
-      "firstName": "Ety",
-      "lastName": "Hgbj",
+      "id": "pay-1784712334826-5GHEO3",
+      "firstName": "Rfgh",
+      "lastName": "Bbn",
       "email": "kpetekoussojuste1@gmail.com",
       "status": "pending",
-      "createdAt": "2026-07-22T09:10:12.206Z",
-      "monerooId": "py_pwp9wj1ij3af"
-    },
-    {
-      "id": "pay-1784711412955-XBNHH3",
-      "firstName": "Ety",
-      "lastName": "Hgbj",
-      "email": "kpetekoussojuste1@gmail.com",
-      "status": "pending",
-      "createdAt": "2026-07-22T09:10:12.955Z",
-      "monerooId": "py_noefbecym47z"
+      "createdAt": "2026-07-22T09:25:34.827Z",
+      "monerooId": "py_rjzjtm446nkz"
     }
-  ]
+  ],
+  "exchangeRateApiKey": "b61ca475a57776dc1ed72aba"
 }

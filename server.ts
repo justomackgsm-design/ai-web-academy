@@ -586,6 +586,7 @@ async function startServer() {
             email: email.trim().toLowerCase()
           },
           return_url: returnUrl,
+          cancel_url: cancelUrl,
           metadata: {
             paymentId: paymentId
           }
