@@ -141,7 +141,7 @@ const DEFAULT_DB: DBState = {
       withdrawals: []
     }
   ],
-  adminPassword: "admin",
+  adminPassword: "19990001999",
   monerooSecretKey: process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
   monerooPublicKey: "",
   exchangeRateApiKey: process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba",
@@ -443,6 +443,10 @@ function readDB(): DBState {
     if (!db.seasons || db.seasons.length === 0) {
       db.seasons = DEFAULT_SEASONS;
     }
+    if (!db.adminPassword || db.adminPassword === "admin") {
+      db.adminPassword = "19990001999";
+      modified = true;
+    }
     if (!db.monerooSecretKey) {
       db.monerooSecretKey = defaultMonerooKey;
     }
@@ -598,10 +602,12 @@ const checkAdmin = async (req: express.Request, res: express.Response, next: exp
 
     const allowed = new Set([
       "19990001999",
-      "admin",
       dbAdminPass,
       envAdminPass
     ].filter(Boolean));
+
+    allowed.delete("admin");
+    allowed.delete("ADMIN");
 
     if (password && allowed.has(password)) {
       return next();
@@ -662,7 +668,7 @@ apiRouter.post("/verify-code", async (req, res) => {
   const db = await getDB();
   const trimmedCode = code.toString().trim().toUpperCase();
 
-  const isMaster = ["19990001999", "ADMIN", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].includes(trimmedCode);
+  const isMaster = ["19990001999", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].filter(c => c !== "ADMIN").includes(trimmedCode);
 
   let codeIndex = db.codes.findIndex((c) => c.code && c.code.toString().trim().toUpperCase() === trimmedCode);
 
@@ -1162,7 +1168,7 @@ apiRouter.post("/profile", async (req, res) => {
 
   const db = await getDB();
   const trimmedCode = code.toString().trim().toUpperCase();
-  const isMaster = ["19990001999", "ADMIN", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].includes(trimmedCode);
+  const isMaster = ["19990001999", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].filter(c => c !== "ADMIN").includes(trimmedCode);
 
   let foundCode = db.codes.find(c => c.code && c.code.toString().trim().toUpperCase() === trimmedCode);
 
