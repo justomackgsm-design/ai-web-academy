@@ -3,16 +3,12 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
-import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { Pool } from "pg";
 import { put } from "@vercel/blob";
 import { Readable } from "stream";
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
