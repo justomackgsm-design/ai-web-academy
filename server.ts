@@ -269,27 +269,34 @@ async function initPostgres() {
     `);
     console.log("All Neon PostgreSQL database tables verified/created successfully.");
 
-    // Check if app_state or access_codes already has data
-    const res = await pool.query(`SELECT data FROM app_state ORDER BY id ASC LIMIT 1`);
-    if (res.rows.length > 0) {
-      console.log("Successfully connected and loaded state from Neon PostgreSQL.");
-      dbCache = JSON.parse(res.rows[0].data);
-    } else {
-      console.log("Initializing empty Neon PostgreSQL database with seed state...");
-      dbCache = JSON.parse(JSON.stringify(DEFAULT_DB));
-      const initialJson = JSON.stringify(DEFAULT_DB);
-      await pool.query(`INSERT INTO app_state (data) VALUES ($1)`, [initialJson]);
+    // 2. *** Load FROM relational tables (source of truth) ***
+    // NEVER load from app_state blob — it can contain stale data that would overwrite the DB.
+    const settingsCheck = await pool.query(`SELECT id FROM admin_settings WHERE id = 1`);
+    if (settingsCheck.rows.length === 0) {
+      // Very first deployment: seed relational tables with defaults
+      console.log("First init — seeding relational tables with default values...");
+      await syncToRelationalTables(JSON.parse(JSON.stringify(DEFAULT_DB)));
     }
 
-    // Sync state to all relational tables so they are fully populated in Neon
-    if (dbCache) {
-      await syncToRelationalTables(dbCache);
-      try {
-        if (fs.existsSync(DATA_DIR)) {
-          fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2), "utf8");
-        }
-      } catch (e) {}
-    }
+    // Load all data from relational tables in parallel
+    const [freshSettings, codesRes, seasonsRes, episodesRes, pendingRes, withdrawalsRes] = await Promise.all([
+      pool.query(`SELECT * FROM admin_settings WHERE id = 1`),
+      pool.query(`SELECT * FROM access_codes`),
+      pool.query(`SELECT * FROM seasons ORDER BY id`),
+      pool.query(`SELECT * FROM episodes ORDER BY created_at`),
+      pool.query(`SELECT * FROM pending_payments ORDER BY created_at DESC`),
+      pool.query(`SELECT * FROM withdrawals`),
+    ]);
+
+    dbCache = buildStateFromRelational(
+      freshSettings.rows[0] || null,
+      codesRes.rows,
+      seasonsRes.rows,
+      episodesRes.rows,
+      pendingRes.rows,
+      withdrawalsRes.rows
+    );
+    console.log(`PostgreSQL loaded: ${(dbCache.codes || []).length} codes, admin_pw: ${dbCache.adminPassword ? "SET" : "MISSING"}`);
 
   } catch (err) {
     console.error("PostgreSQL connection/init error:", err);
@@ -430,15 +437,110 @@ async function syncToRelationalTables(state: DBState) {
   }
 }
 
+// Build a full DBState from PostgreSQL relational table rows
+function buildStateFromRelational(
+  settings: any | null,
+  codes: any[],
+  seasons: any[],
+  episodes: any[],
+  pendingPayments: any[],
+  withdrawals: any[]
+): DBState {
+  const defaultMonerooKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
+  const defaultExchangeRateKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+
+  // Build withdrawal map by access code
+  const withdrawalMap = new Map<string, any[]>();
+  for (const w of withdrawals) {
+    if (!withdrawalMap.has(w.code)) withdrawalMap.set(w.code, []);
+    withdrawalMap.get(w.code)!.push({
+      id: w.id,
+      amount: parseFloat(w.amount),
+      usdtAddress: w.usdt_address,
+      status: w.status,
+      createdAt: w.created_at
+    });
+  }
+
+  return {
+    adminPassword: settings?.admin_password || "19990001999",
+    monerooSecretKey: settings?.moneroo_secret_key || defaultMonerooKey,
+    monerooPublicKey: settings?.moneroo_public_key || "",
+    exchangeRateApiKey: settings?.exchange_rate_api_key || defaultExchangeRateKey,
+    telegramLink: settings?.telegram_link || "",
+    whatsappLink: settings?.whatsapp_link || "",
+    presentationVideoUrl: settings?.presentation_video_url || "https://www.youtube.com/embed/8m9g_b95Eto",
+    presentationVideoPath: settings?.presentation_video_path || "",
+    paymentAmount: parseFloat(settings?.payment_amount) || 50,
+    paymentCurrency: settings?.payment_currency || "USD",
+    originalPrice: parseFloat(settings?.original_price) || 100,
+    promoPrice: parseFloat(settings?.promo_price) || 50,
+    isPromoActive: settings?.is_promo_active ?? true,
+    seasons: seasons.length > 0
+      ? seasons.map((s: any) => ({ id: s.id, title: s.title, description: s.description }))
+      : DEFAULT_SEASONS,
+    episodes: episodes.map((e: any) => ({
+      id: e.id,
+      seasonId: e.season_id,
+      title: e.title,
+      description: e.description || "",
+      videoPath: e.video_path,
+      originalName: e.original_name || "",
+      duration: e.duration || "",
+      createdAt: e.created_at || new Date().toISOString()
+    })),
+    codes: codes.map((c: any) => ({
+      code: c.code,
+      referralCode: c.referral_code || "",
+      deviceLock: c.device_lock || null,
+      isPaid: c.is_paid ?? true,
+      createdAt: c.created_at || new Date().toISOString(),
+      firstName: c.first_name || "",
+      lastName: c.last_name || "",
+      email: c.email || "",
+      referralBalance: parseFloat(c.referral_balance) || 0,
+      referredBy: c.referred_by || null,
+      usdtAddress: c.usdt_address || "",
+      withdrawals: withdrawalMap.get(c.code) || []
+    })),
+    pendingPayments: pendingPayments.map((p: any) => ({
+      id: p.id,
+      firstName: p.first_name,
+      lastName: p.last_name,
+      email: p.email,
+      referredBy: p.referred_by || null,
+      status: p.status,
+      createdAt: p.created_at || new Date().toISOString(),
+      monerooId: p.moneroo_id || "",
+      generatedCode: p.generated_code || ""
+    }))
+  };
+}
+
 async function getDB(): Promise<DBState> {
-  if (pool && !dbCache) {
+  if (pool) {
     try {
-      const res = await pool.query(`SELECT data FROM app_state ORDER BY id ASC LIMIT 1`);
-      if (res.rows.length > 0) {
-        dbCache = JSON.parse(res.rows[0].data);
+      const [settingsRes, codesRes, seasonsRes, episodesRes, pendingRes, withdrawalsRes] = await Promise.all([
+        pool.query(`SELECT * FROM admin_settings WHERE id = 1`),
+        pool.query(`SELECT * FROM access_codes`),
+        pool.query(`SELECT * FROM seasons ORDER BY id`),
+        pool.query(`SELECT * FROM episodes ORDER BY created_at`),
+        pool.query(`SELECT * FROM pending_payments ORDER BY created_at DESC`),
+        pool.query(`SELECT * FROM withdrawals`),
+      ]);
+      if (settingsRes.rows.length > 0) {
+        dbCache = buildStateFromRelational(
+          settingsRes.rows[0],
+          codesRes.rows,
+          seasonsRes.rows,
+          episodesRes.rows,
+          pendingRes.rows,
+          withdrawalsRes.rows
+        );
+        return dbCache;
       }
     } catch (err) {
-      console.error("Error loading state from Neon Postgres in getDB():", err);
+      console.error("Error loading from PostgreSQL relational tables in getDB():", err);
     }
   }
   return readDB();
