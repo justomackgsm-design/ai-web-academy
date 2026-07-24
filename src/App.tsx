@@ -47,6 +47,10 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import type { Season, Episode, AccessCode, AppState, UserProfile } from "./types";
 import EncryptionBackground from "./components/EncryptionBackground";
+import academyLogo1 from "./assets/images/academy_logo_icon_1784372730106.jpg";
+import academyLogo2 from "./assets/images/academy_logo_icon_1784370675461.jpg";
+import trainingWorkspaceImg from "./assets/images/training_workspace_ai_1784372795228.jpg";
+import trainingFullstackImg from "./assets/images/training_fullstack_flow_1784372810541.jpg";
 
 const getYoutubeEmbedUrl = (url: string): string => {
   if (!url) return "https://www.youtube.com/embed/8m9g_b95Eto";
@@ -1215,7 +1219,7 @@ export default function App() {
             <div className="flex items-center space-x-3 cursor-pointer" onClick={() => { setShowAdminLogin(false); }}>
               <div className="w-10 h-10 rounded-xl overflow-hidden shadow-md flex-shrink-0 bg-white border border-slate-200">
                 <img
-                  src="/assets/images/academy_logo_icon_1784372730106.jpg"
+                  src={academyLogo1}
                   alt="AI Web Academy Logo"
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
@@ -3551,7 +3555,7 @@ export default function App() {
                 <div className="bg-white border-2 border-slate-100 rounded-3xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 group">
                   <div className="aspect-video w-full overflow-hidden relative bg-slate-50 border-b border-slate-100">
                     <img
-                      src="/assets/images/training_workspace_ai_1784372795228.jpg"
+                      src={trainingWorkspaceImg}
                       alt="Espace de Travail IA"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
@@ -3575,7 +3579,7 @@ export default function App() {
                 <div className="bg-white border-2 border-slate-100 rounded-3xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 group">
                   <div className="aspect-video w-full overflow-hidden relative bg-slate-50 border-b border-slate-100">
                     <img
-                      src="/assets/images/training_fullstack_flow_1784372810541.jpg"
+                      src={trainingFullstackImg}
                       alt="Flux de Développement Full-Stack"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
@@ -4114,7 +4118,7 @@ export default function App() {
                 <div className="text-center">
                   <div className="w-16 h-16 rounded-2xl mx-auto mb-3 shadow-md border border-slate-100 overflow-hidden bg-white">
                     <img
-                      src="/assets/images/academy_logo_icon_1784370675461.jpg"
+                      src={academyLogo2}
                       alt="AI Web Academy Logo"
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
