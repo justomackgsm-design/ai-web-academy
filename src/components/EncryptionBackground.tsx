@@ -10,6 +10,7 @@ export default function EncryptionBackground() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    // Handle high-DPI displays
     const resizeCanvas = () => {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = window.innerWidth * dpr;
@@ -18,120 +19,131 @@ export default function EncryptionBackground() {
       canvas.style.height = `${window.innerHeight}px`;
       ctx.scale(dpr, dpr);
     };
+
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
-    // Professional hacking/coding characters — binary, hex, code syntax
-    const codeChars = [
-      "0","1","0","1","1","0","0","1",
-      "A","B","C","D","E","F",
-      "{","}","[","]","(",")",";","=>","&&","||","!=","==",
-      "AI","ML","API","SSL","TLS","256","512",
-      "def","var","let","fn","if","for","return",
-      "0x","ff","a3","7d","9c","b2","e5","4f",
-      ">>>","<<<","/*","*/","//","#!",
-      "∑","∞","λ","π","Ω","∂","∇",
+    // Cryptographic and digital characters
+    const cryptoChars = [
+      "0", "1", "0", "1", "0", "1", // heavily prioritize binary
+      "A", "B", "C", "D", "E", "F", "X", "Y", "Z", // hex & algebra
+      "🔒", "🔓", "🔑", "🛡️", "🔑", "💻", // cybersecurity emojis
+      "★", "✦", "◆", "▲", "✖", "✚", // technical glyphs
+      "0x", "ff", "a3", "7d", "9c", "e5" // byte snippets
     ];
 
-    // Streams in 3 color layers for depth
-    type ColorLayer = "green" | "blue" | "purple";
+    const keywords = ["ENCRYPT", "DECRYPT", "SECURE", "ELITE", "CIPHER", "HASH", "KEY", "SSL", "TLS", "AI"];
 
+    // Stream state
+    const fontSize = 14;
+    let columns = Math.ceil(window.innerWidth / 20);
+    
     interface Stream {
       x: number;
       y: number;
       speed: number;
       chars: string[];
       opacity: number;
-      layer: ColorLayer;
-      fontSize: number;
+      word?: string;
+      wordIndex?: number;
     }
 
-    const fontSize = 13;
     let streams: Stream[] = [];
 
-    const layerColors: Record<ColorLayer, { head: string; near: string; tail: string; shadow: string }> = {
-      green:  { head: "rgba(0, 255, 100, OPACITY)", near: "rgba(0, 200, 70, OPACITY)", tail: "rgba(0, 140, 40, OPACITY)", shadow: "#00ff64" },
-      blue:   { head: "rgba(0, 180, 255, OPACITY)", near: "rgba(0, 140, 210, OPACITY)", tail: "rgba(0, 90, 160, OPACITY)", shadow: "#00b4ff" },
-      purple: { head: "rgba(160, 80, 255, OPACITY)", near: "rgba(120, 60, 200, OPACITY)", tail: "rgba(80, 30, 160, OPACITY)", shadow: "#a050ff" },
-    };
-
     const initStreams = () => {
+      columns = Math.ceil(window.innerWidth / 20);
       streams = [];
-      const columns = Math.ceil(window.innerWidth / 22);
       for (let i = 0; i < columns; i++) {
-        const layers: ColorLayer[] = ["green", "green", "green", "blue", "purple"]; // mostly green (Matrix style)
-        const layer = layers[Math.floor(Math.random() * layers.length)];
+        // Randomly select if this column will show a keyword
+        const hasKeyword = Math.random() < 0.12;
+        const word = hasKeyword ? keywords[Math.floor(Math.random() * keywords.length)] : undefined;
+        
         streams.push({
-          x: i * 22 + Math.random() * 4,
-          y: Math.random() * -window.innerHeight * 1.5,
-          speed: 0.8 + Math.random() * 2.5,
-          chars: Array.from({ length: 12 + Math.floor(Math.random() * 25) }, () =>
-            codeChars[Math.floor(Math.random() * codeChars.length)]
+          x: i * 20 + Math.random() * 5,
+          y: Math.random() * -window.innerHeight,
+          speed: 1.2 + Math.random() * 3,
+          chars: Array.from({ length: 15 + Math.floor(Math.random() * 20) }, () => 
+            cryptoChars[Math.floor(Math.random() * cryptoChars.length)]
           ),
-          opacity: 0.04 + Math.random() * 0.14,
-          layer,
-          fontSize: fontSize + Math.floor(Math.random() * 3),
+          opacity: 0.05 + Math.random() * 0.18, // subtle overlay to maintain readability of text on top
+          word,
+          wordIndex: word ? 0 : undefined
         });
       }
     };
+
     initStreams();
-    window.addEventListener("resize", initStreams);
+
+    // Reinitialize streams on resize to fit the screen
+    const handleResizeInit = () => {
+      initStreams();
+    };
+    window.addEventListener("resize", handleResizeInit);
 
     let animationFrameId: number;
 
     const draw = () => {
-      // Dark fade for clear trailing effect
-      ctx.fillStyle = "rgba(248, 250, 252, 0.10)";
+      // Clear with a slight fade effect to create the tail/trail of falling code
+      ctx.fillStyle = "rgba(248, 250, 252, 0.12)"; // match bg-slate-50 slightly to wash out
       ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
       streams.forEach((stream) => {
-        const colors = layerColors[stream.layer];
-
+        // Draw the stream characters
         for (let j = 0; j < stream.chars.length; j++) {
-          const charY = stream.y - j * stream.fontSize * 1.3;
-          if (charY < -60 || charY > window.innerHeight + 60) continue;
+          const charY = stream.y - (j * fontSize * 1.2);
+          
+          // Skip drawing if outside viewport
+          if (charY < -50 || charY > window.innerHeight + 50) continue;
 
-          const char = stream.chars[j];
-          const isHead = j === 0;
-          const isNear = j < 4;
-
-          const opStr = (mult: number) => String(Math.min(stream.opacity * mult, 1));
-
-          if (isHead) {
-            ctx.fillStyle = colors.head.replace("OPACITY", opStr(3.5));
-            ctx.font = `bold ${stream.fontSize + 2}px "Courier New", monospace`;
-            ctx.shadowBlur = 12;
-            ctx.shadowColor = colors.shadow;
-          } else if (isNear) {
-            ctx.fillStyle = colors.near.replace("OPACITY", opStr(2.2));
-            ctx.font = `600 ${stream.fontSize}px "Courier New", monospace`;
-            ctx.shadowBlur = 4;
-            ctx.shadowColor = colors.shadow;
-          } else {
-            ctx.fillStyle = colors.tail.replace("OPACITY", opStr(1));
-            ctx.font = `${stream.fontSize - 1}px "Courier New", monospace`;
-            ctx.shadowBlur = 0;
+          // Determine character to draw
+          let char = stream.chars[j];
+          
+          // If stream has a word, substitute characters at the head with word letters
+          if (stream.word && j < stream.word.length) {
+            char = stream.word[j];
           }
 
+          // Visual treatment: head is brighter, trail is dimmer
+          const isHead = j === 0;
+          const isNearHead = j < 3;
+          
+          if (isHead) {
+            ctx.fillStyle = `rgba(79, 70, 229, ${stream.opacity * 2.2})`; // glowing Indigo-600
+            ctx.font = `bold ${fontSize + 2}px "JetBrains Mono", monospace`;
+          } else if (isNearHead) {
+            ctx.fillStyle = `rgba(99, 102, 241, ${stream.opacity * 1.5})`; // Indigo-500
+            ctx.font = `500 ${fontSize}px "JetBrains Mono", monospace`;
+          } else {
+            ctx.fillStyle = `rgba(129, 140, 248, ${stream.opacity})`; // Indigo-400
+            ctx.font = `${fontSize - 1}px "JetBrains Mono", monospace`;
+          }
+
+          // Draw shadows for high-fidelity glowing effect
+          ctx.shadowBlur = isHead ? 6 : 0;
+          ctx.shadowColor = "#6366f1";
+
           ctx.fillText(char, stream.x, charY);
+          
+          // Reset shadow
           ctx.shadowBlur = 0;
         }
 
+        // Move the stream down
         stream.y += stream.speed;
 
-        // Mutate characters randomly for glitch feel
-        if (Math.random() < 0.04) {
-          const idx = Math.floor(Math.random() * stream.chars.length);
-          stream.chars[idx] = codeChars[Math.floor(Math.random() * codeChars.length)];
+        // Mutate some characters randomly for animation effect
+        if (Math.random() < 0.05) {
+          const mutateIndex = Math.floor(Math.random() * stream.chars.length);
+          stream.chars[mutateIndex] = cryptoChars[Math.floor(Math.random() * cryptoChars.length)];
         }
 
-        // Reset when off screen
-        if (stream.y - stream.chars.length * stream.fontSize * 1.3 > window.innerHeight) {
-          stream.y = -60;
-          stream.speed = 0.8 + Math.random() * 2.5;
-          stream.opacity = 0.04 + Math.random() * 0.14;
-          const layers: ColorLayer[] = ["green", "green", "green", "blue", "purple"];
-          stream.layer = layers[Math.floor(Math.random() * layers.length)];
+        // Reset stream when it goes off screen
+        if (stream.y - (stream.chars.length * fontSize * 1.2) > window.innerHeight) {
+          stream.y = -50;
+          stream.speed = 1.2 + Math.random() * 3;
+          const hasKeyword = Math.random() < 0.12;
+          stream.word = hasKeyword ? keywords[Math.floor(Math.random() * keywords.length)] : undefined;
+          stream.opacity = 0.05 + Math.random() * 0.18;
         }
       });
 
@@ -143,7 +155,7 @@ export default function EncryptionBackground() {
     return () => {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener("resize", resizeCanvas);
-      window.removeEventListener("resize", initStreams);
+      window.removeEventListener("resize", handleResizeInit);
     };
   }, []);
 
@@ -151,8 +163,8 @@ export default function EncryptionBackground() {
     <canvas
       ref={canvasRef}
       id="encryption-background-canvas"
-      className="fixed inset-0 w-full h-full pointer-events-none z-0"
-      style={{ opacity: 0.35, mixBlendMode: "multiply" }}
+      className="fixed inset-0 w-full h-full pointer-events-none z-0 opacity-80"
+      style={{ mixBlendMode: "multiply" }}
     />
   );
 }

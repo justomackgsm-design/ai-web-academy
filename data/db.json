@@ -1,4 +1,12 @@
 {
+  "codes": [
+    {
+      "code": "PRO-DEMO-99",
+      "isPaid": false,
+      "createdAt": "2026-07-22T08:54:51.946Z",
+      "deviceLock": null
+    }
+  ],
   "seasons": [
     {
       "id": "1",
@@ -22,30 +30,27 @@
     }
   ],
   "episodes": [],
-  "codes": [
-    {
-      "code": "PRO-DEMO-99",
-      "deviceLock": null,
-      "isPaid": false,
-      "createdAt": "2026-07-22T08:54:51.946Z"
-    }
-  ],
-  "adminPassword": "admin",
-  "monerooSecretKey": "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
-  "monerooPublicKey": "",
+  "promoPrice": 50,
   "telegramLink": "https://t.me/ai_academy_fit",
   "whatsappLink": "https://wa.me/33600000000",
-  "presentationVideoUrl": "https://www.youtube.com/embed/8m9g_b95Eto",
+  "adminPassword": "19990001999",
+  "isPromoActive": true,
+  "originalPrice": 100,
+  "paymentAmount": 50,
+  "paymentCurrency": "USD",
   "pendingPayments": [
     {
       "id": "pay-1784713849913-4S5DNH",
-      "firstName": "Uuii",
-      "lastName": "Yuuu",
       "email": "kpetekoussojuste1@gmail.com",
       "status": "pending",
+      "lastName": "Yuuu",
       "createdAt": "2026-07-22T09:50:49.913Z",
+      "firstName": "Uuii",
       "monerooId": "py_nktdikpuhpv2"
     }
   ],
-  "exchangeRateApiKey": "b61ca475a57776dc1ed72aba"
+  "monerooPublicKey": "",
+  "monerooSecretKey": "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
+  "exchangeRateApiKey": "b61ca475a57776dc1ed72aba",
+  "presentationVideoUrl": "https://www.youtube.com/embed/8m9g_b95Eto"
 }

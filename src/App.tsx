@@ -239,11 +239,6 @@ export default function App() {
   const [paymentCurrency, setPaymentCurrency] = useState<string>("USD");
   const [publicPaymentAmount, setPublicPaymentAmount] = useState<number>(50);
   const [publicPaymentCurrency, setPublicPaymentCurrency] = useState<string>("USD");
-  const [originalPrice, setOriginalPrice] = useState<number>(100);
-  const [promoPrice, setPromoPrice] = useState<number>(50);
-  const [isPromoActive, setIsPromoActive] = useState<boolean>(false);
-  const [publicOriginalPrice, setPublicOriginalPrice] = useState<number>(100);
-  const [publicIsPromoActive, setPublicIsPromoActive] = useState<boolean>(false);
   const [telegramLink, setTelegramLink] = useState<string>("");
   const [whatsappLink, setWhatsappLink] = useState<string>("");
   const [presentationVideoUrl, setPresentationVideoUrl] = useState<string>("");
@@ -398,8 +393,6 @@ export default function App() {
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
         if (data.paymentAmount !== undefined) setPublicPaymentAmount(data.paymentAmount);
         if (data.paymentCurrency) setPublicPaymentCurrency(data.paymentCurrency);
-        if (data.originalPrice !== undefined) setPublicOriginalPrice(data.originalPrice);
-        if (data.isPromoActive !== undefined) setPublicIsPromoActive(data.isPromoActive);
         if (data.seasons && data.seasons.length > 0) {
           setActiveSeasonId(data.seasons[0].id);
         }
@@ -488,10 +481,7 @@ export default function App() {
           presentationVideoUrl,
           presentationVideoPath,
           paymentAmount,
-          paymentCurrency,
-          originalPrice,
-          promoPrice,
-          isPromoActive
+          paymentCurrency
         })
       });
       const data = await res.json();
@@ -773,9 +763,6 @@ export default function App() {
         if (data.monerooPublicKey) setMonerooPublicKey(data.monerooPublicKey);
         if (data.paymentAmount !== undefined) setPaymentAmount(data.paymentAmount);
         if (data.paymentCurrency) setPaymentCurrency(data.paymentCurrency);
-        if (data.originalPrice !== undefined) setOriginalPrice(data.originalPrice);
-        if (data.promoPrice !== undefined) setPromoPrice(data.promoPrice);
-        if (data.isPromoActive !== undefined) setIsPromoActive(data.isPromoActive);
         if (data.telegramLink) setTelegramLink(data.telegramLink);
         if (data.whatsappLink) setWhatsappLink(data.whatsappLink);
         if (data.presentationVideoUrl) setPresentationVideoUrl(data.presentationVideoUrl);
@@ -2654,57 +2641,6 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* Promo Pricing Section */}
-                        <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider">
-                              🏷️ Prix Promotionnel
-                            </h4>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <span className="text-xs text-slate-600 font-medium">Activer la promo</span>
-                              <div
-                                onClick={() => setIsPromoActive(!isPromoActive)}
-                                className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${isPromoActive ? "bg-green-500" : "bg-slate-300"}`}
-                              >
-                                <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${isPromoActive ? "translate-x-4" : ""}`} />
-                              </div>
-                            </label>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                                Prix Original (barré)
-                              </label>
-                              <input
-                                type="number"
-                                value={originalPrice}
-                                onChange={(e) => setOriginalPrice(parseFloat(e.target.value) || 0)}
-                                placeholder="100"
-                                className="w-full bg-white border border-slate-200 focus:border-amber-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
-                              />
-                              <p className="text-[10px] text-slate-400 mt-1">Affiché barré en rouge</p>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                                Prix Promo (affiché)
-                              </label>
-                              <input
-                                type="number"
-                                value={promoPrice}
-                                onChange={(e) => setPromoPrice(parseFloat(e.target.value) || 0)}
-                                placeholder="50"
-                                className="w-full bg-white border border-slate-200 focus:border-amber-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
-                              />
-                              <p className="text-[10px] text-slate-400 mt-1">Prix envoyé au paiement</p>
-                            </div>
-                          </div>
-                          {isPromoActive && (
-                            <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-xs text-green-700 font-medium">
-                              ✅ Promo active — les clients voient <span className="line-through text-slate-400">{originalPrice} {paymentCurrency}</span> → <strong>{promoPrice} {paymentCurrency}</strong>
-                            </div>
-                          )}
-                        </div>
-
                         <div className="border-t border-slate-100 pt-4">
                           <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
                             Liens des Réseaux Sociaux & Assistance
@@ -3067,104 +3003,54 @@ export default function App() {
           /* UNVERIFIED LANDING PAGE (Landing page sans connexion / sans bouton inscription, avec collage de code + demande de code) */
           <div className="space-y-16">
             
-            {/* ===== HERO SECTION — Professional Animated ===== */}
-            <div className="text-center max-w-4xl mx-auto space-y-8 pt-8">
+            {/* Elegant Hero Banner */}
+            <div className="text-center max-w-3xl mx-auto space-y-6 pt-6">
+              
 
-              {/* Animated badge */}
-              <motion.div
-                initial={{ opacity: 0, y: -16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-                className="inline-flex items-center gap-2 bg-indigo-950/90 text-green-400 font-mono text-[11px] px-4 py-1.5 rounded-full border border-green-500/30 shadow-lg shadow-green-500/10 backdrop-blur"
-              >
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-ping"></span>
-                <span className="tracking-widest uppercase">[ ACCÈS EN DIRECT — Formation Active ]</span>
-              </motion.div>
-
-              {/* Main headline */}
-              <motion.h1
-                initial={{ opacity: 0, y: 24 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.1 }}
-                className="text-4xl sm:text-5xl lg:text-6xl font-display font-extrabold tracking-tight leading-tight"
-              >
-                <span className="text-slate-900">Maîtrisez le </span>
-                <span className="relative inline-block">
-                  <span className="bg-gradient-to-r from-green-500 via-emerald-400 to-teal-500 bg-clip-text text-transparent">
-                    Code & l'IA
-                  </span>
-                  <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-gradient-to-r from-green-500 to-teal-500 rounded-full opacity-60"></span>
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-display font-bold tracking-tight text-slate-900 leading-tight">
+                Apprenez à Bâtir des <br/>
+                <span className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
+                  Sites Web d'Élite avec l'IA
                 </span>
-                <br className="hidden sm:block" />
-                <span className="text-slate-900"> — Sans écrire une seule ligne</span>
-              </motion.h1>
+              </h1>
 
-              {/* Subtitle */}
-              <motion.p
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.2 }}
-                className="text-sm sm:text-base text-slate-600 leading-relaxed max-w-2xl mx-auto"
-              >
-                La formation d'élite qui transforme n'importe qui — avec ou sans background tech — en architecte de plateformes web modernes, rapides et monétisables, grâce à l'intelligence artificielle.
-              </motion.p>
+              <p className="text-sm sm:text-base text-slate-600 leading-relaxed font-sans max-w-2xl mx-auto">
+                Accédez à la formation la plus complète pour transformer des idées simples en plateformes modernes, ultra-rapides et entièrement monétisables en quelques minutes.
+              </p>
 
-              {/* Stats row */}
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.3 }}
-                className="grid grid-cols-3 gap-3 max-w-lg mx-auto"
-              >
-                {[
-                  { value: "4", label: "Saisons", color: "green" },
-                  { value: "0", label: "Ligne à coder", color: "blue" },
-                  { value: "100%", label: "Pratique", color: "purple" }
-                ].map((stat, i) => (
-                  <div key={i} className={`
-                    bg-white/85 backdrop-blur-md p-3 rounded-2xl border text-center shadow-sm
-                    hover:scale-105 transition-all duration-300 cursor-default
-                    ${stat.color === "green" ? "border-green-200 hover:border-green-400 hover:shadow-green-100" :
-                      stat.color === "blue" ? "border-indigo-200 hover:border-indigo-400 hover:shadow-indigo-100" :
-                      "border-purple-200 hover:border-purple-400 hover:shadow-purple-100"}
-                  `}>
-                    <span className={`block text-xl font-bold font-mono
-                      ${stat.color === "green" ? "text-green-600" :
-                        stat.color === "blue" ? "text-indigo-600" : "text-purple-600"}
-                    `}>{stat.value}</span>
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">{stat.label}</span>
-                  </div>
-                ))}
-              </motion.div>
-
-              {/* Mobile banner */}
-              <motion.div
-                initial={{ opacity: 0, scale: 0.96 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.6, delay: 0.4 }}
-                className="bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 text-white rounded-3xl p-5 max-w-2xl mx-auto flex flex-col sm:flex-row items-center sm:items-start gap-4 text-left shadow-2xl border border-indigo-500/20 relative overflow-hidden"
-              >
-                {/* animated scan line */}
-                <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                  <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-green-400/40 to-transparent animate-pulse"></div>
-                  <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-400/30 to-transparent"></div>
+              {/* High-Impact Mobile-friendly learning banner */}
+              <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white rounded-3xl p-6 max-w-2xl mx-auto flex flex-col sm:flex-row items-center sm:items-start space-y-4 sm:space-y-0 sm:space-x-4 text-left shadow-xl border border-indigo-500/30 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none"></div>
+                <div className="bg-gradient-to-tr from-indigo-500 to-indigo-600 p-3.5 rounded-2xl text-white shadow-lg flex-shrink-0">
+                  <Smartphone className="w-6 h-6 animate-pulse text-white" />
                 </div>
-                <div className="bg-gradient-to-br from-green-500 to-emerald-600 p-3.5 rounded-2xl shadow-lg shadow-green-500/30 flex-shrink-0">
-                  <Smartphone className="w-5 h-5 text-white" />
-                </div>
-                <div className="space-y-1.5">
-                  <h4 className="text-xs sm:text-sm font-extrabold text-green-400 uppercase tracking-widest flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping"></span>
-                    <span>100% Smartphone & Tablette — Aucun PC requis</span>
+                <div className="space-y-1">
+                  <h4 className="text-xs sm:text-sm font-extrabold text-indigo-300 uppercase tracking-widest flex items-center space-x-2">
+                    <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+                    <span>100% SMARTPHONE & TABLETTE — AUCUN PC REQUIS !</span>
                   </h4>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    Conçu pour être suivi <span className="text-white font-bold">entièrement depuis votre smartphone</span>. Créez des bases de données, hébergez des sites pro et orchestrez l'IA — directement depuis votre téléphone.
+                  <p className="text-xs text-slate-200 leading-relaxed">
+                    Cette formation est conçue pour être suivie et mise en pratique <span className="font-bold text-white underline decoration-indigo-400 decoration-2">entièrement sur votre simple smartphone</span>. Vous apprendrez à concevoir, connecter des bases de données et héberger des sites professionnels directement depuis votre téléphone, tout comme un développeur traditionnel.
                   </p>
                 </div>
-              </motion.div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 pt-4 max-w-xl mx-auto">
+                <div className="bg-white/80 backdrop-blur-md p-3 rounded-xl border border-slate-200 text-center shadow-sm hover:border-indigo-400/50 hover:shadow-md transition-all duration-300">
+                  <span className="block text-lg font-bold text-slate-800">4</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Saisons</span>
+                </div>
+                <div className="bg-white/80 backdrop-blur-md p-3 rounded-xl border border-slate-200 text-center shadow-sm hover:border-indigo-400/50 hover:shadow-md transition-all duration-300">
+                  <span className="block text-lg font-bold text-slate-800 font-mono">0</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Lignes à coder</span>
+                </div>
+                <div className="bg-white/80 backdrop-blur-md p-3 rounded-xl border border-slate-200 text-center shadow-sm hover:border-indigo-400/50 hover:shadow-md transition-all duration-300">
+                  <span className="block text-lg font-bold text-slate-800">100%</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Pratique</span>
+                </div>
+              </div>
 
             </div>
-            {/* ===== END HERO SECTION ===== */}
 
             {/* PRESENTATION VIDEO COMPONENT */}
             <div className="bg-slate-950 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl max-w-4xl mx-auto my-12">
@@ -3328,17 +3214,7 @@ export default function App() {
                   <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4 flex justify-between items-center">
                     <div>
                       <span className="block text-[10px] text-slate-500 uppercase tracking-widest font-mono">Prix d'accès unique</span>
-                      {publicIsPromoActive && publicOriginalPrice > publicPaymentAmount ? (
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="line-through text-slate-400 text-sm">{publicOriginalPrice.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""} {publicPaymentCurrency}</span>
-                            <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide animate-pulse">PROMO</span>
-                          </div>
-                          <span className="text-2xl font-bold font-display text-indigo-700">{publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""} {publicPaymentCurrency}</span>
-                        </div>
-                      ) : (
-                        <span className="text-2xl font-bold font-display text-slate-900">{publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""} {publicPaymentCurrency}</span>
-                      )}
+                      <span className="text-2xl font-bold font-display text-slate-900">50.00 $ USD</span>
                     </div>
                     <button
                       onClick={handleStartPayment}
@@ -4251,18 +4127,7 @@ export default function App() {
                 </div>
 
                 <div className="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100 text-xs text-indigo-700">
-                  {publicIsPromoActive && publicOriginalPrice > publicPaymentAmount ? (
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="line-through text-slate-400">{publicOriginalPrice.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""}{publicPaymentCurrency}</span>
-                        <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide animate-pulse">PROMO</span>
-                      </div>
-                      <span className="font-bold text-indigo-700 text-sm">{publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""}{publicPaymentCurrency}</span>
-                    </div>
-                  ) : (
-                    <span className="font-bold">Tarif d'accès : {publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""}{publicPaymentCurrency}</span>
-                  )}
-                  <span className="block mt-1">(Frais de service et hébergement privé inclus). Accès définitif sur 1 appareil.</span>
+                  <span className="font-bold">Tarif d'accès : {publicPaymentAmount.toLocaleString("fr-FR")} {publicPaymentCurrency === "USD" ? "$" : ""} {publicPaymentCurrency}</span> (Frais de service et hébergement privé inclus). Accès définitif sur 1 appareil.
                 </div>
 
                 <div className="space-y-3">

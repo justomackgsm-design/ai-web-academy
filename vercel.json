@@ -1,21 +1,13 @@
 {
   "version": 2,
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api"
+      "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
-  ],
-  "functions": {
-    "api/index.ts": {
-      "runtime": "nodejs20.x",
-      "maxDuration": 30
-    }
-  }
+  ]
 }
