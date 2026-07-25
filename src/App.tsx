@@ -51,6 +51,8 @@ import academyLogo1 from "./assets/images/academy_logo_icon_1784372730106.jpg";
 import academyLogo2 from "./assets/images/academy_logo_icon_1784370675461.jpg";
 import trainingWorkspaceImg from "./assets/images/training_workspace_ai_1784372795228.jpg";
 import trainingFullstackImg from "./assets/images/training_fullstack_flow_1784372810541.jpg";
+import instructorPosterImg from "./assets/images/instructor_video_poster_1784374412837.jpg";
+import entrepreneurImg from "./assets/images/young_entrepreneur_explaining_video_1784374730424.jpg";
 
 const getYoutubeEmbedUrl = (url: string): string => {
   if (!url) return "https://www.youtube.com/embed/8m9g_b95Eto";
@@ -3059,9 +3061,9 @@ export default function App() {
             {/* PRESENTATION VIDEO COMPONENT */}
             <div className="bg-slate-950 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl max-w-4xl mx-auto my-12">
               <div className="p-5 border-b border-slate-800 bg-slate-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="flex items-center space-x-3 text-left">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-                    <Video className="w-5 h-5 text-indigo-400" />
+                <div className="flex items-center space-x-3.5 text-left">
+                  <div className="w-12 h-12 rounded-xl border border-indigo-500/30 overflow-hidden flex-shrink-0 bg-slate-800 shadow-inner">
+                    <img src={entrepreneurImg} alt="Formateur AI Web Academy" className="w-full h-full object-cover" />
                   </div>
                   <div>
                     <h3 className="text-base font-display font-extrabold text-white flex items-center space-x-2">
@@ -3090,6 +3092,7 @@ export default function App() {
                     controls
                     playsInline
                     controlsList="nodownload"
+                    poster={instructorPosterImg}
                     onContextMenu={(e) => e.preventDefault()}
                     src={presentationVideoPath.startsWith("http") ? presentationVideoPath : `/api/public-video/${presentationVideoPath}`}
                   />

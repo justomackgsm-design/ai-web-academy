@@ -404,12 +404,132 @@ async function getDB(): Promise<DBState> {
   if (pool) {
     await ensurePostgresInit();
     try {
-      const res = await pool.query(`SELECT data FROM app_state WHERE id = 1 LIMIT 1`);
-      if (res.rows.length > 0) {
-        dbCache = JSON.parse(res.rows[0].data);
+      // 1. Load admin settings from Neon PostgreSQL relational table
+      const settingsRes = await pool.query(`SELECT * FROM admin_settings WHERE id = 1 LIMIT 1`);
+      let adminPassword = "19990001999";
+      let monerooSecretKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
+      let monerooPublicKey = "";
+      let exchangeRateApiKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+      let telegramLink = "https://t.me/ai_academy_fit";
+      let whatsappLink = "https://wa.me/33600000000";
+      let presentationVideoUrl = "https://www.youtube.com/embed/8m9g_b95Eto";
+      let presentationVideoPath = "";
+      let paymentAmount = 50;
+      let paymentCurrency = "USD";
+      let originalPrice = 100;
+      let promoPrice = 50;
+      let isPromoActive = true;
+
+      if (settingsRes.rows.length > 0) {
+        const s = settingsRes.rows[0];
+        if (s.admin_password) adminPassword = s.admin_password;
+        if (s.moneroo_secret_key) monerooSecretKey = s.moneroo_secret_key;
+        if (s.moneroo_public_key !== undefined) monerooPublicKey = s.moneroo_public_key || "";
+        if (s.exchange_rate_api_key) exchangeRateApiKey = s.exchange_rate_api_key;
+        if (s.telegram_link) telegramLink = s.telegram_link;
+        if (s.whatsapp_link) whatsappLink = s.whatsapp_link;
+        if (s.presentation_video_url) presentationVideoUrl = s.presentation_video_url;
+        if (s.presentation_video_path !== undefined) presentationVideoPath = s.presentation_video_path || "";
+        if (s.payment_amount) paymentAmount = Number(s.payment_amount);
+        if (s.payment_currency) paymentCurrency = s.payment_currency;
+        if (s.original_price) originalPrice = Number(s.original_price);
+        if (s.promo_price) promoPrice = Number(s.promo_price);
+        if (s.is_promo_active !== undefined && s.is_promo_active !== null) isPromoActive = Boolean(s.is_promo_active);
       }
+
+      // 2. Load seasons
+      const seasonsRes = await pool.query(`SELECT * FROM seasons ORDER BY id ASC`);
+      const seasons = seasonsRes.rows.length > 0
+        ? seasonsRes.rows.map(r => ({ id: String(r.id), title: r.title, description: r.description }))
+        : DEFAULT_SEASONS;
+
+      // 3. Load episodes
+      const episodesRes = await pool.query(`SELECT * FROM episodes ORDER BY created_at ASC`);
+      const episodes = episodesRes.rows.map(r => ({
+        id: String(r.id),
+        seasonId: String(r.season_id),
+        title: r.title,
+        description: r.description || "",
+        videoPath: r.video_path,
+        originalName: r.original_name || "",
+        duration: r.duration || "",
+        createdAt: r.created_at || new Date().toISOString()
+      }));
+
+      // 4. Load access codes and withdrawals
+      const codesRes = await pool.query(`SELECT * FROM access_codes ORDER BY created_at DESC`);
+      const wdrRes = await pool.query(`SELECT * FROM withdrawals ORDER BY created_at DESC`);
+      const wdrMap: Record<string, any[]> = {};
+      for (const w of wdrRes.rows) {
+        if (!wdrMap[w.code]) wdrMap[w.code] = [];
+        wdrMap[w.code].push({
+          id: String(w.id),
+          amount: Number(w.amount),
+          usdtAddress: w.usdt_address || "",
+          status: w.status || "pending",
+          createdAt: w.created_at || new Date().toISOString()
+        });
+      }
+
+      const codes = codesRes.rows.map(c => ({
+        code: String(c.code),
+        referralCode: c.referral_code || "",
+        deviceLock: c.device_lock || null,
+        isPaid: c.is_paid ?? true,
+        createdAt: c.created_at || new Date().toISOString(),
+        firstName: c.first_name || "",
+        lastName: c.last_name || "",
+        email: c.email || "",
+        referralBalance: c.referral_balance ? Number(c.referral_balance) : 0,
+        referredBy: c.referred_by || null,
+        usdtAddress: c.usdt_address || "",
+        withdrawals: wdrMap[c.code] || []
+      }));
+
+      // 5. Load pending payments
+      const pendingRes = await pool.query(`SELECT * FROM pending_payments ORDER BY created_at DESC`);
+      const pendingPayments = pendingRes.rows.map(p => ({
+        id: String(p.id),
+        firstName: p.first_name,
+        lastName: p.last_name,
+        email: p.email,
+        referredBy: p.referred_by || undefined,
+        status: p.status,
+        createdAt: p.created_at || new Date().toISOString(),
+        monerooId: p.moneroo_id || "",
+        generatedCode: p.generated_code || undefined
+      }));
+
+      dbCache = {
+        codes: codes.length > 0 ? codes : DEFAULT_DB.codes,
+        seasons,
+        episodes,
+        promoPrice,
+        telegramLink,
+        whatsappLink,
+        adminPassword,
+        isPromoActive,
+        originalPrice,
+        paymentAmount,
+        paymentCurrency,
+        pendingPayments,
+        monerooPublicKey,
+        monerooSecretKey,
+        exchangeRateApiKey,
+        presentationVideoUrl,
+        presentationVideoPath
+      };
+
+      return dbCache;
     } catch (err) {
-      console.error("Error loading state from Neon Postgres in getDB():", err);
+      console.error("Error loading relational state from Neon Postgres in getDB():", err);
+      // Fallback to app_state table if individual tables fail
+      try {
+        const res = await pool.query(`SELECT data FROM app_state WHERE id = 1 LIMIT 1`);
+        if (res.rows.length > 0) {
+          dbCache = JSON.parse(res.rows[0].data);
+        }
+      } catch (e) {}
     }
   }
   return readDB();
@@ -1747,25 +1867,35 @@ apiRouter.get("/videos/:filename", async (req, res) => {
 });
 
 const serveStaticImage = (req: express.Request, res: express.Response) => {
-  const filename = path.basename(req.params.filename);
-  const possiblePaths = [
-    path.join(process.cwd(), "public", "assets", "images", filename),
-    path.join(process.cwd(), "src", "assets", "images", filename),
-    path.join(process.cwd(), "public", "assets", filename),
-    path.join(process.cwd(), "public", filename),
+  const rawFilename = path.basename(req.params.filename);
+  // Clean filename by removing hash if present (e.g., logo-qHwtCQbA.jpg -> logo.jpg)
+  const unhashedFilename = rawFilename.replace(/-[a-zA-Z0-9_-]{8,}\./, ".");
+
+  const filenamesToTry = [rawFilename, unhashedFilename];
+  const possibleDirs = [
+    path.join(process.cwd(), "dist", "assets"),
+    path.join(process.cwd(), "public", "assets", "images"),
+    path.join(process.cwd(), "src", "assets", "images"),
+    path.join(process.cwd(), "public", "assets"),
+    path.join(process.cwd(), "public"),
+    path.join(process.cwd(), "src", "assets")
   ];
 
-  for (const filePath of possiblePaths) {
-    if (fs.existsSync(filePath)) {
-      const ext = path.extname(filename).toLowerCase();
-      let contentType = "image/jpeg";
-      if (ext === ".png") contentType = "image/png";
-      if (ext === ".svg") contentType = "image/svg+xml";
-      if (ext === ".ico") contentType = "image/x-icon";
-      if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      return res.sendFile(filePath);
+  for (const fname of filenamesToTry) {
+    for (const dirPath of possibleDirs) {
+      const filePath = path.join(dirPath, fname);
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        const ext = path.extname(fname).toLowerCase();
+        let contentType = "image/jpeg";
+        if (ext === ".png") contentType = "image/png";
+        if (ext === ".svg") contentType = "image/svg+xml";
+        if (ext === ".ico") contentType = "image/x-icon";
+        if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
+        if (ext === ".webp") contentType = "image/webp";
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        return res.sendFile(filePath);
+      }
     }
   }
   return res.status(404).send("Image introuvable.");
@@ -1775,9 +1905,10 @@ apiRouter.get("/assets/images/:filename", serveStaticImage);
 apiRouter.get("/assets/:filename", serveStaticImage);
 apiRouter.get("/public/assets/images/:filename", serveStaticImage);
 
-// Static assets mounts
-app.use("/assets", express.static(path.join(process.cwd(), "public/assets")));
-app.use("/assets", express.static(path.join(process.cwd(), "src/assets")));
+// Static assets mounts (order matters: dist/assets first for built bundles)
+app.use("/assets", express.static(path.join(process.cwd(), "dist", "assets")));
+app.use("/assets", express.static(path.join(process.cwd(), "public", "assets")));
+app.use("/assets", express.static(path.join(process.cwd(), "src", "assets")));
 app.use("/uploads", express.static(UPLOADS_DIR));
 app.use(express.static(path.join(process.cwd(), "public")));
 app.use(express.static(path.join(process.cwd(), "dist")));
