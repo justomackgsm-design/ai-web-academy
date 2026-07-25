@@ -406,7 +406,13 @@ async function getDB(): Promise<DBState> {
       // 1. Try quick load from app_state first
       const appStateRes = await pool.query(`SELECT data FROM app_state WHERE id = 1 LIMIT 1`);
       if (appStateRes.rows.length > 0) {
-        dbCache = JSON.parse(appStateRes.rows[0].data);
+        const parsed: DBState = JSON.parse(appStateRes.rows[0].data);
+        if (!parsed.monerooSecretKey) parsed.monerooSecretKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
+        if (!parsed.exchangeRateApiKey) parsed.exchangeRateApiKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+        if (!parsed.adminPassword) parsed.adminPassword = "19990001999";
+        if (parsed.paymentAmount === undefined) parsed.paymentAmount = 50;
+        if (!parsed.paymentCurrency) parsed.paymentCurrency = "USD";
+        dbCache = parsed;
         return dbCache!;
       }
 
@@ -1317,7 +1323,7 @@ apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
   const db = await getDB();
   db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
   db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
-  if (exchangeRateApiKey !== undefined) db.exchangeRateApiKey = exchangeRateApiKey.trim();
+  if (exchangeRateApiKey !== undefined && exchangeRateApiKey.trim()) db.exchangeRateApiKey = exchangeRateApiKey.trim();
   db.telegramLink = telegramLink ? telegramLink.trim() : "";
   db.whatsappLink = whatsappLink ? whatsappLink.trim() : "";
   db.presentationVideoUrl = presentationVideoUrl ? presentationVideoUrl.trim() : "";

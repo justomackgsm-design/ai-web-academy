@@ -243,6 +243,7 @@ export default function App() {
   const [monerooPublicKey, setMonerooPublicKey] = useState<string>("");
   const [paymentAmount, setPaymentAmount] = useState<number>(50);
   const [paymentCurrency, setPaymentCurrency] = useState<string>("USD");
+  const [exchangeRateApiKey, setExchangeRateApiKey] = useState<string>("");
   const [publicPaymentAmount, setPublicPaymentAmount] = useState<number>(50);
   const [publicPaymentCurrency, setPublicPaymentCurrency] = useState<string>("USD");
   const [telegramLink, setTelegramLink] = useState<string>("");
@@ -397,6 +398,7 @@ export default function App() {
         if (data.whatsappLink) setWhatsappLink(data.whatsappLink);
         if (data.presentationVideoUrl) setPresentationVideoUrl(data.presentationVideoUrl);
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
+        if (data.exchangeRateApiKey) setExchangeRateApiKey(data.exchangeRateApiKey);
         if (data.paymentAmount !== undefined) setPublicPaymentAmount(data.paymentAmount);
         if (data.paymentCurrency) setPublicPaymentCurrency(data.paymentCurrency);
         if (data.seasons && data.seasons.length > 0) {
@@ -486,6 +488,7 @@ export default function App() {
           whatsappLink,
           presentationVideoUrl,
           presentationVideoPath,
+          exchangeRateApiKey,
           paymentAmount,
           paymentCurrency
         })
@@ -783,8 +786,7 @@ export default function App() {
         if (data.whatsappLink) setWhatsappLink(data.whatsappLink);
         if (data.presentationVideoUrl) setPresentationVideoUrl(data.presentationVideoUrl);
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
-
-        setIsAdminAuthenticated(true);
+        if (data.exchangeRateApiKey) setExchangeRateApiKey(data.exchangeRateApiKey);
         localStorage.setItem("ai_web_academy_admin_pass", trimmedPass);
       } else {
         setAdminError(data.error || "Mot de passe administrateur incorrect.");
@@ -2655,6 +2657,29 @@ export default function App() {
                             <p className="text-[10px] text-slate-400 mt-1">
                               Choisissez la devise par défaut de votre compte marchand Moneroo.
                             </p>
+                          </div>
+                        </div>
+
+                        <div className="border-t border-slate-100 pt-4">
+                          <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+                            Clé API de Conversion Devises (ExchangeRate-API)
+                          </h4>
+                          <div className="space-y-2">
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                                Clé API ExchangeRate-API (v6)
+                              </label>
+                              <input
+                                type="text"
+                                value={exchangeRateApiKey}
+                                onChange={(e) => setExchangeRateApiKey(e.target.value)}
+                                placeholder="b61ca475a57776dc1ed72aba"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
+                              />
+                              <p className="text-[10px] text-slate-400 mt-1">
+                                Sert à convertir le montant en USD vers le Franc CFA (XOF) avant l'envoi à Moneroo. Sans cette clé, un taux de secours (~575 XOF/$) est utilisé.
+                              </p>
+                            </div>
                           </div>
                         </div>
 
