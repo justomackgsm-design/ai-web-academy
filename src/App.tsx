@@ -594,7 +594,16 @@ export default function App() {
           referredBy: referralCodeUsed
         })
       });
-      const data = await res.json();
+      const contentType = res.headers.get("content-type");
+      let data: any = {};
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        console.error("Non-JSON response from server:", text);
+        data = { error: `Erreur serveur (${res.status}). Veuillez réessayer.` };
+      }
+
       if (res.ok && data.checkoutUrl) {
         window.location.href = data.checkoutUrl;
       } else {
@@ -603,10 +612,11 @@ export default function App() {
           message: data.error || "Impossible d'initier le paiement avec Moneroo. Veuillez réessayer."
         });
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error("Payment session creation error:", err);
       setCustomAlert({
         title: "Erreur Réseau",
-        message: "Une erreur réseau est survenue lors de l'initialisation de votre paiement."
+        message: "Une erreur réseau est survenue lors de l'initialisation de votre paiement: " + (err.message || "")
       });
     } finally {
       setIsVerifying(false);
@@ -1225,6 +1235,7 @@ export default function App() {
                   alt="AI Web Academy Logo"
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
+                  onError={(e) => { e.currentTarget.src = "/assets/images/academy_logo_icon_1784372730106.jpg"; }}
                 />
               </div>
               <div>
@@ -3063,7 +3074,7 @@ export default function App() {
               <div className="p-5 border-b border-slate-800 bg-slate-900/50 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="flex items-center space-x-3.5 text-left">
                   <div className="w-12 h-12 rounded-xl border border-indigo-500/30 overflow-hidden flex-shrink-0 bg-slate-800 shadow-inner">
-                    <img src={entrepreneurImg} alt="Formateur AI Web Academy" className="w-full h-full object-cover" />
+                    <img src={entrepreneurImg} alt="Formateur AI Web Academy" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = "/assets/images/young_entrepreneur_explaining_video_1784374730424.jpg"; }} />
                   </div>
                   <div>
                     <h3 className="text-base font-display font-extrabold text-white flex items-center space-x-2">
@@ -3562,6 +3573,7 @@ export default function App() {
                       alt="Espace de Travail IA"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
+                      onError={(e) => { e.currentTarget.src = "/assets/images/training_workspace_ai_1784372795228.jpg"; }}
                     />
                     <div className="absolute top-3 left-3 bg-indigo-600 text-white font-mono text-[9px] font-bold px-2 py-1 rounded-md uppercase tracking-wider shadow">
                       Environnement d'Élite
@@ -3586,6 +3598,7 @@ export default function App() {
                       alt="Flux de Développement Full-Stack"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
+                      onError={(e) => { e.currentTarget.src = "/assets/images/training_fullstack_flow_1784372810541.jpg"; }}
                     />
                     <div className="absolute top-3 left-3 bg-emerald-600 text-white font-mono text-[9px] font-bold px-2 py-1 rounded-md uppercase tracking-wider shadow">
                       Architecture Moderne
@@ -4125,6 +4138,7 @@ export default function App() {
                       alt="AI Web Academy Logo"
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
+                      onError={(e) => { e.currentTarget.src = "/assets/images/academy_logo_icon_1784370675461.jpg"; }}
                     />
                   </div>
                   <h3 className="text-lg font-bold text-slate-800 font-display">Abonnement - Formation Ultime IA</h3>

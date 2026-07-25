@@ -2,9 +2,17 @@
   "codes": [
     {
       "code": "PRO-DEMO-99",
+      "referralCode": "",
+      "deviceLock": null,
       "isPaid": false,
       "createdAt": "2026-07-22T08:54:51.946Z",
-      "deviceLock": null
+      "firstName": "",
+      "lastName": "",
+      "email": "",
+      "referralBalance": 0,
+      "referredBy": null,
+      "usdtAddress": "",
+      "withdrawals": []
     }
   ],
   "seasons": [
@@ -40,13 +48,23 @@
   "paymentCurrency": "USD",
   "pendingPayments": [
     {
-      "id": "pay-1784713849913-4S5DNH",
-      "email": "kpetekoussojuste1@gmail.com",
+      "id": "pay-1785004335218-2U77C6",
+      "firstName": "Jean",
+      "lastName": "Test",
+      "email": "jean.test@gmail.com",
       "status": "pending",
-      "lastName": "Yuuu",
-      "createdAt": "2026-07-22T09:50:49.913Z",
-      "firstName": "Uuii",
-      "monerooId": "py_nktdikpuhpv2"
+      "createdAt": "2026-07-25T18:32:15.219Z",
+      "monerooId": "py_wcod9xse8pyu"
+    },
+    {
+      "id": "pay-test-123",
+      "firstName": "Jean",
+      "lastName": "Dupont",
+      "email": "jean@example.com",
+      "referredBy": "REF-123",
+      "status": "pending",
+      "createdAt": "2026-07-25T18:31:24.755Z",
+      "monerooId": "py_12345"
     },
     {
       "id": "pay-1784884418795-BNQXOD",
@@ -56,10 +74,29 @@
       "status": "pending",
       "createdAt": "2026-07-24T09:13:38.796Z",
       "monerooId": "py_qtdyvvjprcpx"
+    },
+    {
+      "id": "pay-1784713849913-4S5DNH",
+      "firstName": "Uuii",
+      "lastName": "Yuuu",
+      "email": "kpetekoussojuste1@gmail.com",
+      "status": "pending",
+      "createdAt": "2026-07-22T09:50:49.913Z",
+      "monerooId": "py_nktdikpuhpv2"
+    },
+    {
+      "id": "pay-1785004549392-AGOSNT",
+      "firstName": "Juste",
+      "lastName": "Kpetekousso",
+      "email": "kpetekoussojuste1@gmail.com",
+      "status": "pending",
+      "createdAt": "2026-07-25T18:35:49.392Z",
+      "monerooId": "py_4ok8a3qv28zz"
     }
   ],
   "monerooPublicKey": "",
   "monerooSecretKey": "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
   "exchangeRateApiKey": "b61ca475a57776dc1ed72aba",
-  "presentationVideoUrl": "https://www.youtube.com/embed/8m9g_b95Eto"
+  "presentationVideoUrl": "https://www.youtube.com/embed/8m9g_b95Eto",
+  "presentationVideoPath": ""
 }

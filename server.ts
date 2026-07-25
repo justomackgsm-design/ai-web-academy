@@ -76,6 +76,11 @@ interface DBState {
   whatsappLink?: string;
   presentationVideoUrl?: string;
   presentationVideoPath?: string;
+  paymentAmount?: number;
+  paymentCurrency?: string;
+  originalPrice?: number;
+  promoPrice?: number;
+  isPromoActive?: boolean;
   pendingPayments?: Array<{
     id: string;
     firstName: string;
@@ -259,16 +264,7 @@ async function initPostgres() {
         INSERT INTO app_state (id, data) VALUES (1, $1)
         ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW();
       `, [initialJson]);
-    }
-
-    // Sync state to all relational tables so they are fully populated in Neon
-    if (dbCache) {
-      await syncToRelationalTables(dbCache);
-      try {
-        if (fs.existsSync(DATA_DIR)) {
-          fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2), "utf8");
-        }
-      } catch (e) {}
+      syncToRelationalTables(dbCache).catch(e => console.error("Initial sync error:", e));
     }
 
   } catch (err) {
@@ -401,10 +397,20 @@ async function syncToRelationalTables(state: DBState) {
 }
 
 async function getDB(): Promise<DBState> {
+  if (dbCache) {
+    return dbCache;
+  }
   if (pool) {
     await ensurePostgresInit();
     try {
-      // 1. Load admin settings from Neon PostgreSQL relational table
+      // 1. Try quick load from app_state first
+      const appStateRes = await pool.query(`SELECT data FROM app_state WHERE id = 1 LIMIT 1`);
+      if (appStateRes.rows.length > 0) {
+        dbCache = JSON.parse(appStateRes.rows[0].data);
+        return dbCache!;
+      }
+
+      // 2. Fallback to relational tables
       const settingsRes = await pool.query(`SELECT * FROM admin_settings WHERE id = 1 LIMIT 1`);
       let adminPassword = "19990001999";
       let monerooSecretKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
@@ -437,13 +443,11 @@ async function getDB(): Promise<DBState> {
         if (s.is_promo_active !== undefined && s.is_promo_active !== null) isPromoActive = Boolean(s.is_promo_active);
       }
 
-      // 2. Load seasons
       const seasonsRes = await pool.query(`SELECT * FROM seasons ORDER BY id ASC`);
       const seasons = seasonsRes.rows.length > 0
         ? seasonsRes.rows.map(r => ({ id: String(r.id), title: r.title, description: r.description }))
         : DEFAULT_SEASONS;
 
-      // 3. Load episodes
       const episodesRes = await pool.query(`SELECT * FROM episodes ORDER BY created_at ASC`);
       const episodes = episodesRes.rows.map(r => ({
         id: String(r.id),
@@ -456,7 +460,6 @@ async function getDB(): Promise<DBState> {
         createdAt: r.created_at || new Date().toISOString()
       }));
 
-      // 4. Load access codes and withdrawals
       const codesRes = await pool.query(`SELECT * FROM access_codes ORDER BY created_at DESC`);
       const wdrRes = await pool.query(`SELECT * FROM withdrawals ORDER BY created_at DESC`);
       const wdrMap: Record<string, any[]> = {};
@@ -486,7 +489,6 @@ async function getDB(): Promise<DBState> {
         withdrawals: wdrMap[c.code] || []
       }));
 
-      // 5. Load pending payments
       const pendingRes = await pool.query(`SELECT * FROM pending_payments ORDER BY created_at DESC`);
       const pendingPayments = pendingRes.rows.map(p => ({
         id: String(p.id),
@@ -523,13 +525,6 @@ async function getDB(): Promise<DBState> {
       return dbCache;
     } catch (err) {
       console.error("Error loading relational state from Neon Postgres in getDB():", err);
-      // Fallback to app_state table if individual tables fail
-      try {
-        const res = await pool.query(`SELECT data FROM app_state WHERE id = 1 LIMIT 1`);
-        if (res.rows.length > 0) {
-          dbCache = JSON.parse(res.rows[0].data);
-        }
-      } catch (e) {}
     }
   }
   return readDB();
@@ -554,6 +549,7 @@ function readDB(): DBState {
 
   try {
     let db: DBState;
+    let modified = false;
     if (!fs.existsSync(DB_FILE)) {
       db = JSON.parse(JSON.stringify(DEFAULT_DB));
       try {
@@ -578,7 +574,6 @@ function readDB(): DBState {
       db.exchangeRateApiKey = defaultExchangeRateKey;
     }
 
-    let modified = false;
     if (!db.codes || !Array.isArray(db.codes)) {
       db.codes = [];
       modified = true;
@@ -648,8 +643,10 @@ async function writeDB(state: DBState): Promise<void> {
         INSERT INTO app_state (id, data, updated_at) VALUES (1, $1, NOW())
         ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW();
       `, [jsonStr]);
-      await syncToRelationalTables(state);
-      console.log("Successfully persisted state to Neon PostgreSQL relational tables.");
+      syncToRelationalTables(state).catch(err => {
+        console.error("Async syncToRelationalTables error:", err);
+      });
+      console.log("Successfully persisted state to Neon PostgreSQL app_state.");
     } catch (err) {
       console.error("Failed to sync state to Neon PostgreSQL:", err);
     }
@@ -999,12 +996,17 @@ apiRouter.post("/payments/create-session", async (req, res) => {
   db.pendingPayments.push(newPendingPayment);
   await writeDB(db);
 
-  // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API
+  // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API (with 2.5s timeout)
   let xofAmount = 28750; // default fallback ($50 * ~575)
   const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
   if (rateApiKey) {
     try {
-      const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/50`);
+      const rateController = new AbortController();
+      const rateTimer = setTimeout(() => rateController.abort(), 2500);
+      const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/50`, {
+        signal: rateController.signal
+      });
+      clearTimeout(rateTimer);
       if (rateRes.ok) {
         const rateData: any = await rateRes.json();
         if (rateData && rateData.conversion_result) {
@@ -1015,11 +1017,13 @@ apiRouter.post("/payments/create-session", async (req, res) => {
         console.warn("ExchangeRate API response not OK, using default conversion:", rateRes.status);
       }
     } catch (err) {
-      console.error("ExchangeRate API conversion error, using fallback XOF amount:", err);
+      console.warn("ExchangeRate API conversion timeout or error, using fallback XOF amount:", err);
     }
   }
 
   try {
+    const monerooController = new AbortController();
+    const monerooTimer = setTimeout(() => monerooController.abort(), 8000);
     const response = await fetch("https://api.moneroo.io/v1/payments/initialize", {
       method: "POST",
       headers: {
@@ -1027,6 +1031,7 @@ apiRouter.post("/payments/create-session", async (req, res) => {
         "Authorization": `Bearer ${apiKey}`,
         "Accept": "application/json"
       },
+      signal: monerooController.signal,
       body: JSON.stringify({
         amount: xofAmount,
         currency: "XOF",
@@ -1043,6 +1048,7 @@ apiRouter.post("/payments/create-session", async (req, res) => {
         }
       })
     });
+    clearTimeout(monerooTimer);
 
     const data: any = await response.json();
     console.log("Moneroo Response:", data);
@@ -1904,6 +1910,10 @@ const serveStaticImage = (req: express.Request, res: express.Response) => {
 apiRouter.get("/assets/images/:filename", serveStaticImage);
 apiRouter.get("/assets/:filename", serveStaticImage);
 apiRouter.get("/public/assets/images/:filename", serveStaticImage);
+apiRouter.get("/assets/*", (req: any, res: any) => {
+  req.params.filename = path.basename(req.path);
+  return serveStaticImage(req, res);
+});
 
 // Static assets mounts (order matters: dist/assets first for built bundles)
 app.use("/assets", express.static(path.join(process.cwd(), "dist", "assets")));
@@ -1912,6 +1922,19 @@ app.use("/assets", express.static(path.join(process.cwd(), "src", "assets")));
 app.use("/uploads", express.static(UPLOADS_DIR));
 app.use(express.static(path.join(process.cwd(), "public")));
 app.use(express.static(path.join(process.cwd(), "dist")));
+
+app.get("/assets/*", (req: any, res: any) => {
+  req.params.filename = path.basename(req.path);
+  return serveStaticImage(req, res);
+});
+app.get("/uploads/*", (req, res) => {
+  const filename = path.basename(req.path);
+  const filePath = path.join(UPLOADS_DIR, filename);
+  if (fs.existsSync(filePath)) {
+    return res.sendFile(filePath);
+  }
+  return res.status(404).send("Upload introuvable.");
+});
 
 // Mount apiRouter on both /api and / to handle Vercel rewrites seamlessly
 app.use("/api", apiRouter);
