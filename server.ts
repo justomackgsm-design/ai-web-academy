@@ -996,14 +996,15 @@ apiRouter.post("/payments/create-session", async (req, res) => {
   db.pendingPayments.push(newPendingPayment);
   await writeDB(db);
 
-  // Dynamic Currency Conversion (50 USD to XOF) via ExchangeRate API (with 2.5s timeout)
-  let xofAmount = 28750; // default fallback ($50 * ~575)
+  // Dynamic Currency Conversion (USD to XOF) via ExchangeRate API (with 2.5s timeout)
+  const usdAmount = Number(db.paymentAmount) > 0 ? Number(db.paymentAmount) : 50;
+  let xofAmount = Math.round(usdAmount * 575); // default fallback (~575 XOF per USD)
   const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
   if (rateApiKey) {
     try {
       const rateController = new AbortController();
       const rateTimer = setTimeout(() => rateController.abort(), 2500);
-      const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/50`, {
+      const rateRes = await fetch(`https://v6.exchangerate-api.com/v6/${rateApiKey}/pair/USD/XOF/${usdAmount}`, {
         signal: rateController.signal
       });
       clearTimeout(rateTimer);
@@ -1011,7 +1012,7 @@ apiRouter.post("/payments/create-session", async (req, res) => {
         const rateData: any = await rateRes.json();
         if (rateData && rateData.conversion_result) {
           xofAmount = Math.round(rateData.conversion_result);
-          console.log(`Converted $50 USD -> ${xofAmount} XOF (Rate: ${rateData.conversion_rate})`);
+          console.log(`Converted ${usdAmount} USD -> ${xofAmount} XOF (Rate: ${rateData.conversion_rate})`);
         }
       } else {
         console.warn("ExchangeRate API response not OK, using default conversion:", rateRes.status);
@@ -1312,7 +1313,7 @@ apiRouter.post("/payments/webhook", async (req, res) => {
 
 // Admin Update Settings
 apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
-  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath } = req.body;
+  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath, paymentAmount, paymentCurrency } = req.body;
   const db = await getDB();
   db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
   db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
@@ -1321,6 +1322,13 @@ apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
   db.whatsappLink = whatsappLink ? whatsappLink.trim() : "";
   db.presentationVideoUrl = presentationVideoUrl ? presentationVideoUrl.trim() : "";
   db.presentationVideoPath = presentationVideoPath !== undefined ? presentationVideoPath.trim() : "";
+  if (paymentAmount !== undefined && paymentAmount !== "") {
+    const parsedAmount = Number(paymentAmount);
+    if (!isNaN(parsedAmount) && parsedAmount > 0) db.paymentAmount = parsedAmount;
+  }
+  if (paymentCurrency !== undefined && paymentCurrency !== "") {
+    db.paymentCurrency = String(paymentCurrency).trim().toUpperCase();
+  }
   await writeDB(db);
   res.json({ success: true, message: "Configuration mise à jour avec succès !" });
 });
@@ -1480,6 +1488,8 @@ apiRouter.get("/admin/data", checkAdmin, async (req, res) => {
     whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
     presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
     presentationVideoPath: db.presentationVideoPath || "",
+    paymentAmount: db.paymentAmount || 50,
+    paymentCurrency: db.paymentCurrency || "USD",
     pendingPayments: db.pendingPayments || []
   });
 });
@@ -1879,11 +1889,12 @@ const serveStaticImage = (req: express.Request, res: express.Response) => {
 
   const filenamesToTry = [rawFilename, unhashedFilename];
   const possibleDirs = [
+    path.join(process.cwd(), "dist", "assets", "images"),
     path.join(process.cwd(), "dist", "assets"),
     path.join(process.cwd(), "public", "assets", "images"),
-    path.join(process.cwd(), "src", "assets", "images"),
     path.join(process.cwd(), "public", "assets"),
     path.join(process.cwd(), "public"),
+    path.join(process.cwd(), "src", "assets", "images"),
     path.join(process.cwd(), "src", "assets")
   ];
 
