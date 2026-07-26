@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import multer from "multer";
 import dotenv from "dotenv";
 import { Pool } from "pg";
@@ -1958,11 +1957,14 @@ app.use("/api", apiRouter);
 app.use("/", apiRouter);
 
 async function startServer() {
+  const isServerless = !!(process.env.VERCEL || process.env.LAMBDA_RUNTIME_API);
+  if (isServerless) return;
   await initPostgres();
   const PORT = 3000;
 
   // Vite development integration or Production static server
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

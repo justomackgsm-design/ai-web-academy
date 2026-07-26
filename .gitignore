@@ -7,3 +7,5 @@ coverage/
 .env*
 !.env.example
 data/uploads/
+api/_server.js
+api/_server.js.map
