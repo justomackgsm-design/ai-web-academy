@@ -4,7 +4,7 @@ import fs from "fs";
 import multer from "multer";
 import dotenv from "dotenv";
 import { Pool } from "pg";
-import { put } from "@vercel/blob";
+import { v2 as cloudinary } from "cloudinary";
 import { Readable } from "stream";
 
 dotenv.config();
@@ -690,55 +690,36 @@ async function writeDB(state: DBState): Promise<void> {
   }
 }
 
-// Upload file to Vercel Blob storage if BLOB_READ_WRITE_TOKEN is present
+// Upload video to Cloudinary
 async function uploadToBlobIfNeeded(file: Express.Multer.File): Promise<string> {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (token) {
-    try {
-      const fileStream = fs.createReadStream(file.path);
-      const blob = await put(`courses/${Date.now()}-${file.originalname.replace(/\s+/g, "_")}`, fileStream, {
-        access: "public",
-        token: token
-      });
-      console.log(`Uploaded successfully to Vercel Blob: ${blob.url}`);
-      try {
-        fs.unlinkSync(file.path);
-      } catch (e) {}
-      return blob.url;
-    } catch (err) {
-      console.error("Vercel Blob upload failed, falling back to local file:", err);
-    }
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    throw new Error(
+      "Cloudinary non configuré. Ajoutez CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY et CLOUDINARY_API_SECRET dans les variables d'environnement Vercel."
+    );
   }
-  // No Blob token — save to local uploads dir
-  const destPath = path.join(UPLOADS_DIR, file.filename);
+
+  cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret });
+
   try {
-    fs.renameSync(file.path, destPath);
-  } catch (e) {
-    // On read-only serverless, local upload is not possible
-    console.error("Local file upload failed (serverless env). Please set BLOB_READ_WRITE_TOKEN or use a video URL.", e);
-    throw new Error("L'upload local n'est pas supporté sur Vercel. Veuillez configurer le stockage Blob ou utiliser une URL vidéo directe.");
+    const result = await cloudinary.uploader.upload(file.path, {
+      resource_type: "video",
+      folder: "ai-academy-courses",
+      use_filename: true,
+      unique_filename: true,
+    });
+    console.log("Uploaded to Cloudinary:", result.secure_url);
+    try { fs.unlinkSync(file.path); } catch (e) {}
+    return result.secure_url;
+  } catch (err) {
+    console.error("Cloudinary upload failed:", err);
+    throw new Error("L'upload vers Cloudinary a échoué. Vérifiez vos identifiants Cloudinary dans les variables d'environnement.");
   }
-  return file.filename;
 }
 
-export const app = express();
-
-app.set("trust proxy", true);
-
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-password, x-device-id");
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
-app.use(express.json());
-
-let postgresInitialized = false;
-let initPromise: Promise<void> | null = null;
 
 async function ensurePostgresInit() {
   if (!pool || postgresInitialized) return;
