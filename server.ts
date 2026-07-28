@@ -163,9 +163,14 @@ let dbCache: DBState | null = null;
 
 if (dbUrl) {
   console.log("Connecting to PostgreSQL (Neon) Database...");
+  // Use WHATWG URL API to strip sslmode param before passing to pg,
+  // which prevents pg-connection-string from emitting SSL deprecation warnings.
+  // SSL is handled explicitly via the ssl option below.
+  const pgUrl = new URL(dbUrl);
+  pgUrl.searchParams.delete("sslmode");
   pool = new Pool({
-    connectionString: dbUrl,
-    ssl: { rejectUnauthorized: false } // Required for serverless database SSL connections
+    connectionString: pgUrl.toString(),
+    ssl: { rejectUnauthorized: false }
   });
 }
 
