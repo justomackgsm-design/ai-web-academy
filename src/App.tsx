@@ -379,11 +379,7 @@ export default function App() {
       setShowAdminLogin(false);
     }
 
-    // Check stored Admin session
-    const storedAdminPass = localStorage.getItem("ai_web_academy_admin_pass");
-    if (storedAdminPass) {
-      fetchAdminData(storedAdminPass);
-    }
+    // No auto-login — admin must always enter code when visiting /administration
   }, []);
 
   // Fetch Public State
@@ -809,7 +805,7 @@ export default function App() {
     setIsAdminAuthenticated(false);
     setAdminPassword("");
     localStorage.removeItem("ai_web_academy_admin_pass");
-    window.location.href = "/";
+    window.location.href = "/administration";
   };
 
   // Admin Actions: Code management
@@ -1222,7 +1218,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-950 relative overflow-hidden">
-      {!accessCode && <EncryptionBackground />}
+      {!accessCode && !showAdminLogin && <EncryptionBackground />}
       
       {/* 1. Header Navigation Bar */}
       {!showAdminLogin && (
