@@ -244,7 +244,12 @@ async function initPostgres() {
         telegram_link TEXT,
         whatsapp_link TEXT,
         presentation_video_url TEXT,
-        presentation_video_path TEXT
+        presentation_video_path TEXT,
+        payment_amount NUMERIC(12, 2) DEFAULT 50,
+        payment_currency VARCHAR(10) DEFAULT 'USD',
+        original_price NUMERIC(12, 2) DEFAULT 100,
+        promo_price NUMERIC(12, 2) DEFAULT 50,
+        is_promo_active BOOLEAN DEFAULT TRUE
       );
 
       CREATE TABLE IF NOT EXISTS app_state (
@@ -252,6 +257,14 @@ async function initPostgres() {
         data TEXT NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+    // Ensure payment columns exist in admin_settings for existing DBs
+    await pool.query(`
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS payment_amount NUMERIC(12, 2) DEFAULT 50;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS payment_currency VARCHAR(10) DEFAULT 'USD';
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS original_price NUMERIC(12, 2) DEFAULT 100;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS promo_price NUMERIC(12, 2) DEFAULT 50;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS is_promo_active BOOLEAN DEFAULT TRUE;
     `);
     console.log("All Neon PostgreSQL database tables verified/created successfully.");
 
@@ -282,8 +295,8 @@ async function syncToRelationalTables(state: DBState) {
   try {
     // 1. Admin Settings
     await pool.query(`
-      INSERT INTO admin_settings (id, admin_password, moneroo_secret_key, moneroo_public_key, exchange_rate_api_key, telegram_link, whatsapp_link, presentation_video_url, presentation_video_path)
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
+      INSERT INTO admin_settings (id, admin_password, moneroo_secret_key, moneroo_public_key, exchange_rate_api_key, telegram_link, whatsapp_link, presentation_video_url, presentation_video_path, payment_amount, payment_currency, original_price, promo_price, is_promo_active)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (id) DO UPDATE SET
         admin_password = EXCLUDED.admin_password,
         moneroo_secret_key = EXCLUDED.moneroo_secret_key,
@@ -292,7 +305,12 @@ async function syncToRelationalTables(state: DBState) {
         telegram_link = EXCLUDED.telegram_link,
         whatsapp_link = EXCLUDED.whatsapp_link,
         presentation_video_url = EXCLUDED.presentation_video_url,
-        presentation_video_path = EXCLUDED.presentation_video_path;
+        presentation_video_path = EXCLUDED.presentation_video_path,
+        payment_amount = EXCLUDED.payment_amount,
+        payment_currency = EXCLUDED.payment_currency,
+        original_price = EXCLUDED.original_price,
+        promo_price = EXCLUDED.promo_price,
+        is_promo_active = EXCLUDED.is_promo_active;
     `, [
       state.adminPassword || "19990001999",
       state.monerooSecretKey || "",
@@ -301,7 +319,12 @@ async function syncToRelationalTables(state: DBState) {
       state.telegramLink || "",
       state.whatsappLink || "",
       state.presentationVideoUrl || "",
-      state.presentationVideoPath || ""
+      state.presentationVideoPath || "",
+      state.paymentAmount ?? 50,
+      state.paymentCurrency || "USD",
+      state.originalPrice ?? 100,
+      state.promoPrice ?? 50,
+      state.isPromoActive ?? true
     ]);
 
     // 2. Seasons
@@ -1751,6 +1774,11 @@ apiRouter.get("/public-video/:filename", async (req, res) => {
     return res.status(403).send("Accès refusé. Cette vidéo n'est pas configurée comme vidéo de présentation.");
   }
 
+    // If stored as a Vercel Blob URL, redirect directly
+  if (currentPath.startsWith("https://")) {
+    return res.redirect(302, currentPath);
+  }
+
   const targetFilename = path.basename(currentPath) || filename;
   const videoFilePath = path.join(UPLOADS_DIR, targetFilename);
   if (!fs.existsSync(videoFilePath)) {
@@ -1852,6 +1880,11 @@ apiRouter.get("/videos/:filename", async (req, res) => {
     return res.status(403).json({ error: verification.error });
   }
 
+  // If stored as a Vercel Blob URL, proxy or redirect
+  if (filename.startsWith("http")) {
+    const decodedUrl = decodeURIComponent(filename);
+    return res.redirect(302, decodedUrl);
+  }
   const videoFilePath = path.join(UPLOADS_DIR, filename);
   if (!fs.existsSync(videoFilePath)) {
     return res.status(404).send("Fichier vidéo introuvable sur le serveur.");
