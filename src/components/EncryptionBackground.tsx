@@ -6,165 +6,104 @@ export default function EncryptionBackground() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Handle high-DPI displays
-    const resizeCanvas = () => {
-      const dpr = window.devicePixelRatio || 1;
+    const dpr = window.devicePixelRatio || 1;
+
+    const resize = () => {
       canvas.width = window.innerWidth * dpr;
       canvas.height = window.innerHeight * dpr;
       canvas.style.width = `${window.innerWidth}px`;
       canvas.style.height = `${window.innerHeight}px`;
       ctx.scale(dpr, dpr);
     };
+    resize();
+    window.addEventListener("resize", resize);
 
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
+    // --- Particle network config ---
+    const PARTICLE_COUNT = 55;
+    const CONNECTION_DIST = 160;
+    const SPEED = 0.28;
 
-    // Cryptographic and digital characters
-    const cryptoChars = [
-      "0", "1", "0", "1", "0", "1", // heavily prioritize binary
-      "A", "B", "C", "D", "E", "F", "X", "Y", "Z", // hex & algebra
-      "🔒", "🔓", "🔑", "🛡️", "🔑", "💻", // cybersecurity emojis
-      "★", "✦", "◆", "▲", "✖", "✚", // technical glyphs
-      "0x", "ff", "a3", "7d", "9c", "e5" // byte snippets
-    ];
-
-    const keywords = ["ENCRYPT", "DECRYPT", "SECURE", "ELITE", "CIPHER", "HASH", "KEY", "SSL", "TLS", "AI"];
-
-    // Stream state
-    const fontSize = 14;
-    let columns = Math.ceil(window.innerWidth / 20);
-    
-    interface Stream {
+    interface Particle {
       x: number;
       y: number;
-      speed: number;
-      chars: string[];
-      opacity: number;
-      word?: string;
-      wordIndex?: number;
+      vx: number;
+      vy: number;
+      r: number;
     }
 
-    let streams: Stream[] = [];
+    const rand = (min: number, max: number) => min + Math.random() * (max - min);
 
-    const initStreams = () => {
-      columns = Math.ceil(window.innerWidth / 20);
-      streams = [];
-      for (let i = 0; i < columns; i++) {
-        // Randomly select if this column will show a keyword
-        const hasKeyword = Math.random() < 0.12;
-        const word = hasKeyword ? keywords[Math.floor(Math.random() * keywords.length)] : undefined;
-        
-        streams.push({
-          x: i * 20 + Math.random() * 5,
-          y: Math.random() * -window.innerHeight,
-          speed: 1.2 + Math.random() * 3,
-          chars: Array.from({ length: 15 + Math.floor(Math.random() * 20) }, () => 
-            cryptoChars[Math.floor(Math.random() * cryptoChars.length)]
-          ),
-          opacity: 0.05 + Math.random() * 0.18, // subtle overlay to maintain readability of text on top
-          word,
-          wordIndex: word ? 0 : undefined
-        });
-      }
-    };
+    let particles: Particle[] = Array.from({ length: PARTICLE_COUNT }, () => ({
+      x: rand(0, window.innerWidth),
+      y: rand(0, window.innerHeight),
+      vx: rand(-SPEED, SPEED),
+      vy: rand(-SPEED, SPEED),
+      r: rand(1.5, 3),
+    }));
 
-    initStreams();
-
-    // Reinitialize streams on resize to fit the screen
-    const handleResizeInit = () => {
-      initStreams();
-    };
-    window.addEventListener("resize", handleResizeInit);
-
-    let animationFrameId: number;
+    let rafId: number;
 
     const draw = () => {
-      // Clear with a slight fade effect to create the tail/trail of falling code
-      ctx.fillStyle = "rgba(248, 250, 252, 0.12)"; // match bg-slate-50 slightly to wash out
-      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+      const W = window.innerWidth;
+      const H = window.innerHeight;
 
-      streams.forEach((stream) => {
-        // Draw the stream characters
-        for (let j = 0; j < stream.chars.length; j++) {
-          const charY = stream.y - (j * fontSize * 1.2);
-          
-          // Skip drawing if outside viewport
-          if (charY < -50 || charY > window.innerHeight + 50) continue;
+      ctx.clearRect(0, 0, W, H);
 
-          // Determine character to draw
-          let char = stream.chars[j];
-          
-          // If stream has a word, substitute characters at the head with word letters
-          if (stream.word && j < stream.word.length) {
-            char = stream.word[j];
+      // Update positions
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0 || p.x > W) p.vx *= -1;
+        if (p.y < 0 || p.y > H) p.vy *= -1;
+      }
+
+      // Draw connections
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const a = particles[i];
+          const b = particles[j];
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < CONNECTION_DIST) {
+            const alpha = (1 - dist / CONNECTION_DIST) * 0.13;
+            ctx.beginPath();
+            ctx.strokeStyle = `rgba(99, 102, 241, ${alpha})`;
+            ctx.lineWidth = 0.8;
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
           }
-
-          // Visual treatment: head is brighter, trail is dimmer
-          const isHead = j === 0;
-          const isNearHead = j < 3;
-          
-          if (isHead) {
-            ctx.fillStyle = `rgba(79, 70, 229, ${stream.opacity * 2.2})`; // glowing Indigo-600
-            ctx.font = `bold ${fontSize + 2}px "JetBrains Mono", monospace`;
-          } else if (isNearHead) {
-            ctx.fillStyle = `rgba(99, 102, 241, ${stream.opacity * 1.5})`; // Indigo-500
-            ctx.font = `500 ${fontSize}px "JetBrains Mono", monospace`;
-          } else {
-            ctx.fillStyle = `rgba(129, 140, 248, ${stream.opacity})`; // Indigo-400
-            ctx.font = `${fontSize - 1}px "JetBrains Mono", monospace`;
-          }
-
-          // Draw shadows for high-fidelity glowing effect
-          ctx.shadowBlur = isHead ? 6 : 0;
-          ctx.shadowColor = "#6366f1";
-
-          ctx.fillText(char, stream.x, charY);
-          
-          // Reset shadow
-          ctx.shadowBlur = 0;
         }
+      }
 
-        // Move the stream down
-        stream.y += stream.speed;
+      // Draw particles
+      for (const p of particles) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(99, 102, 241, 0.18)";
+        ctx.fill();
+      }
 
-        // Mutate some characters randomly for animation effect
-        if (Math.random() < 0.05) {
-          const mutateIndex = Math.floor(Math.random() * stream.chars.length);
-          stream.chars[mutateIndex] = cryptoChars[Math.floor(Math.random() * cryptoChars.length)];
-        }
-
-        // Reset stream when it goes off screen
-        if (stream.y - (stream.chars.length * fontSize * 1.2) > window.innerHeight) {
-          stream.y = -50;
-          stream.speed = 1.2 + Math.random() * 3;
-          const hasKeyword = Math.random() < 0.12;
-          stream.word = hasKeyword ? keywords[Math.floor(Math.random() * keywords.length)] : undefined;
-          stream.opacity = 0.05 + Math.random() * 0.18;
-        }
-      });
-
-      animationFrameId = requestAnimationFrame(draw);
+      rafId = requestAnimationFrame(draw);
     };
 
     draw();
 
     return () => {
-      cancelAnimationFrame(animationFrameId);
-      window.removeEventListener("resize", resizeCanvas);
-      window.removeEventListener("resize", handleResizeInit);
+      cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", resize);
     };
   }, []);
 
   return (
     <canvas
       ref={canvasRef}
-      id="encryption-background-canvas"
-      className="fixed inset-0 w-full h-full pointer-events-none z-0 opacity-80"
-      style={{ mixBlendMode: "multiply" }}
+      className="fixed inset-0 w-full h-full pointer-events-none z-0"
+      style={{ opacity: 0.7 }}
     />
   );
 }
