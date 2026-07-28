@@ -788,6 +788,7 @@ export default function App() {
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
         if (data.exchangeRateApiKey) setExchangeRateApiKey(data.exchangeRateApiKey);
         localStorage.setItem("ai_web_academy_admin_pass", trimmedPass);
+        setIsAdminAuthenticated(true);
       } else {
         setAdminError(data.error || "Mot de passe administrateur incorrect.");
         localStorage.removeItem("ai_web_academy_admin_pass");
