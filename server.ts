@@ -160,6 +160,8 @@ const DEFAULT_DATABASE_URL = "postgresql://neondb_owner:npg_SEOhoeypW18M@ep-gree
 const dbUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
 let pool: Pool | null = null;
 let dbCache: DBState | null = null;
+let dbCacheTime: number = 0;
+const DB_CACHE_TTL_MS = 30000; // 30 seconds — allows changes to propagate across serverless instances
 
 if (dbUrl) {
   console.log("Connecting to PostgreSQL (Neon) Database...");
@@ -273,6 +275,7 @@ async function initPostgres() {
     if (res.rows.length > 0) {
       console.log("Successfully connected and loaded state from Neon PostgreSQL.");
       dbCache = JSON.parse(res.rows[0].data);
+      dbCacheTime = Date.now();
     } else {
       console.log("Initializing empty Neon PostgreSQL database with seed state...");
       dbCache = JSON.parse(JSON.stringify(DEFAULT_DB));
@@ -424,7 +427,7 @@ async function syncToRelationalTables(state: DBState) {
 }
 
 async function getDB(): Promise<DBState> {
-  if (dbCache) {
+  if (dbCache && (Date.now() - dbCacheTime) < DB_CACHE_TTL_MS) {
     return dbCache;
   }
   if (pool) {
@@ -660,6 +663,7 @@ function readDB(): DBState {
 
 async function writeDB(state: DBState): Promise<void> {
   dbCache = state;
+  dbCacheTime = Date.now();
   try {
     if (fs.existsSync(DATA_DIR)) {
       fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), "utf8");
@@ -704,6 +708,15 @@ async function uploadToBlobIfNeeded(file: Express.Multer.File): Promise<string> 
     } catch (err) {
       console.error("Vercel Blob upload failed, falling back to local file:", err);
     }
+  }
+  // No Blob token — save to local uploads dir
+  const destPath = path.join(UPLOADS_DIR, file.filename);
+  try {
+    fs.renameSync(file.path, destPath);
+  } catch (e) {
+    // On read-only serverless, local upload is not possible
+    console.error("Local file upload failed (serverless env). Please set BLOB_READ_WRITE_TOKEN or use a video URL.", e);
+    throw new Error("L'upload local n'est pas supporté sur Vercel. Veuillez configurer le stockage Blob ou utiliser une URL vidéo directe.");
   }
   return file.filename;
 }
@@ -844,7 +857,12 @@ apiRouter.get("/public-state", async (req, res) => {
     telegramLink: db.telegramLink || "https://t.me/ai_academy_fit",
     whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
     presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
-    presentationVideoPath: db.presentationVideoPath || ""
+    presentationVideoPath: db.presentationVideoPath || "",
+    paymentAmount: db.paymentAmount ?? 50,
+    paymentCurrency: db.paymentCurrency || "USD",
+    originalPrice: db.originalPrice ?? 100,
+    promoPrice: db.promoPrice ?? 50,
+    isPromoActive: db.isPromoActive ?? true
   });
 });
 
