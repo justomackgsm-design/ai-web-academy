@@ -75,6 +75,9 @@ interface DBState {
   whatsappLink?: string;
   presentationVideoUrl?: string;
   presentationVideoPath?: string;
+  comingSoonEnabled?: boolean;
+  comingSoonDate?: string;
+  comingSoonMessage?: string;
   paymentAmount?: number;
   paymentCurrency?: string;
   originalPrice?: number;
@@ -116,12 +119,30 @@ const DEFAULT_SEASONS: Season[] = [
   }
 ];
 
+// ---------------------------------------------------------------------------
+// Configuration sensible : UNIQUEMENT via les variables d'environnement.
+// Aucun mot de passe, clé d'API, code d'accès ou URL de base de données
+// ne doit être écrit en dur dans ce fichier (le code est public sur GitHub).
+// Variables attendues (Vercel > Settings > Environment Variables) :
+//   DATABASE_URL, ADMIN_PASSWORD, MASTER_ACCESS_CODE,
+//   MONEROO_SECRET_KEY, EXCHANGE_RATE_API_KEY,
+//   CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+// ---------------------------------------------------------------------------
+const ENV_ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
+const ENV_MASTER_ACCESS_CODE = (process.env.MASTER_ACCESS_CODE || "").trim();
+const ENV_MONEROO_SECRET_KEY = (process.env.MONEROO_SECRET_KEY || "").trim();
+const ENV_EXCHANGE_RATE_API_KEY = (process.env.EXCHANGE_RATE_API_KEY || "").trim();
+
+if (!ENV_ADMIN_PASSWORD) {
+  console.warn("[config] ADMIN_PASSWORD n'est pas defini. Le mot de passe stocke en base de donnees sera utilise.");
+}
+
 const DEFAULT_DB: DBState = {
   seasons: DEFAULT_SEASONS,
   episodes: [],
-  codes: [
+  codes: ENV_MASTER_ACCESS_CODE ? [
     {
-      code: "19990001999",
+      code: ENV_MASTER_ACCESS_CODE,
       referralCode: "REF-1999-MASTER",
       deviceLock: null,
       isPaid: true,
@@ -144,11 +165,11 @@ const DEFAULT_DB: DBState = {
       referralBalance: 0,
       withdrawals: []
     }
-  ],
-  adminPassword: "19990001999",
-  monerooSecretKey: process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03",
+  ] : [],
+  adminPassword: ENV_ADMIN_PASSWORD,
+  monerooSecretKey: ENV_MONEROO_SECRET_KEY,
   monerooPublicKey: "",
-  exchangeRateApiKey: process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba",
+  exchangeRateApiKey: ENV_EXCHANGE_RATE_API_KEY,
   telegramLink: "https://t.me/ai_academy_fit",
   whatsappLink: "https://wa.me/33600000000",
   presentationVideoUrl: "https://www.youtube.com/embed/8m9g_b95Eto",
@@ -156,8 +177,8 @@ const DEFAULT_DB: DBState = {
 };
 
 // PostgreSQL Integration Pool Setup
-const DEFAULT_DATABASE_URL = "postgresql://neondb_owner:npg_SEOhoeypW18M@ep-green-grass-auiv7uwj.c-10.us-east-1.aws.neon.tech/neondb?sslmode=require";
-const dbUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
+// L'URL de la base de donnees vient exclusivement de l'environnement.
+const dbUrl = (process.env.DATABASE_URL || "").trim();
 let pool: Pool | null = null;
 let dbCache: DBState | null = null;
 let dbCacheTime: number = 0;
@@ -317,7 +338,7 @@ async function syncToRelationalTables(state: DBState) {
         promo_price = EXCLUDED.promo_price,
         is_promo_active = EXCLUDED.is_promo_active;
     `, [
-      state.adminPassword || "19990001999",
+      state.adminPassword || ENV_ADMIN_PASSWORD,
       state.monerooSecretKey || "",
       state.monerooPublicKey || "",
       state.exchangeRateApiKey || "",
@@ -439,9 +460,9 @@ async function getDB(): Promise<DBState> {
       const appStateRes = await pool.query(`SELECT data FROM app_state WHERE id = 1 LIMIT 1`);
       if (appStateRes.rows.length > 0) {
         const parsed: DBState = JSON.parse(appStateRes.rows[0].data);
-        if (!parsed.monerooSecretKey) parsed.monerooSecretKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
-        if (!parsed.exchangeRateApiKey) parsed.exchangeRateApiKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
-        if (!parsed.adminPassword) parsed.adminPassword = "19990001999";
+        if (!parsed.monerooSecretKey) parsed.monerooSecretKey = ENV_MONEROO_SECRET_KEY;
+        if (!parsed.exchangeRateApiKey) parsed.exchangeRateApiKey = ENV_EXCHANGE_RATE_API_KEY;
+        if (!parsed.adminPassword) parsed.adminPassword = ENV_ADMIN_PASSWORD;
         if (parsed.paymentAmount === undefined) parsed.paymentAmount = 50;
         if (!parsed.paymentCurrency) parsed.paymentCurrency = "USD";
         dbCache = parsed;
@@ -450,10 +471,10 @@ async function getDB(): Promise<DBState> {
 
       // 2. Fallback to relational tables
       const settingsRes = await pool.query(`SELECT * FROM admin_settings WHERE id = 1 LIMIT 1`);
-      let adminPassword = "19990001999";
-      let monerooSecretKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
+      let adminPassword = ENV_ADMIN_PASSWORD;
+      let monerooSecretKey = ENV_MONEROO_SECRET_KEY;
       let monerooPublicKey = "";
-      let exchangeRateApiKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+      let exchangeRateApiKey = ENV_EXCHANGE_RATE_API_KEY;
       let telegramLink = "https://t.me/ai_academy_fit";
       let whatsappLink = "https://wa.me/33600000000";
       let presentationVideoUrl = "https://www.youtube.com/embed/8m9g_b95Eto";
@@ -569,8 +590,8 @@ async function getDB(): Promise<DBState> {
 }
 
 function readDB(): DBState {
-  const defaultMonerooKey = process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
-  const defaultExchangeRateKey = process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+  const defaultMonerooKey = ENV_MONEROO_SECRET_KEY;
+  const defaultExchangeRateKey = ENV_EXCHANGE_RATE_API_KEY;
 
   if (dbCache) {
     if (!dbCache.seasons || dbCache.seasons.length === 0) {
@@ -601,8 +622,8 @@ function readDB(): DBState {
     if (!db.seasons || db.seasons.length === 0) {
       db.seasons = DEFAULT_SEASONS;
     }
-    if (!db.adminPassword || db.adminPassword === "admin") {
-      db.adminPassword = "19990001999";
+    if ((!db.adminPassword || db.adminPassword === "admin") && ENV_ADMIN_PASSWORD) {
+      db.adminPassword = ENV_ADMIN_PASSWORD;
       modified = true;
     }
     if (!db.monerooSecretKey) {
@@ -617,10 +638,10 @@ function readDB(): DBState {
       modified = true;
     }
 
-    const has1999Code = db.codes.some(c => c.code && c.code.trim().toUpperCase() === "19990001999");
-    if (!has1999Code) {
+    const hasMasterCode = !ENV_MASTER_ACCESS_CODE || db.codes.some(c => c.code && c.code.trim().toUpperCase() === ENV_MASTER_ACCESS_CODE.toUpperCase());
+    if (!hasMasterCode) {
       db.codes.unshift({
-        code: "19990001999",
+        code: ENV_MASTER_ACCESS_CODE,
         referralCode: "REF-1999-MASTER",
         deviceLock: null,
         isPaid: true,
@@ -796,10 +817,6 @@ const checkAdmin = async (req: express.Request, res: express.Response, next: exp
       return res.status(401).json({ error: "Mot de passe administrateur manquant." });
     }
 
-    if (password === "19990001999" || password === "admin" || password === "ADMIN") {
-      return next();
-    }
-
     let dbAdminPass = "";
     try {
       const db = await getDB();
@@ -810,15 +827,11 @@ const checkAdmin = async (req: express.Request, res: express.Response, next: exp
       console.error("Error getting db in checkAdmin:", dbErr);
     }
 
-    const envAdminPass = (process.env.ADMIN_PASSWORD || "").toString().trim();
+    const allowed = new Set([dbAdminPass, ENV_ADMIN_PASSWORD].filter(Boolean));
 
-    const allowed = new Set([
-      "19990001999",
-      "admin",
-      "ADMIN",
-      dbAdminPass,
-      envAdminPass
-    ].filter(Boolean));
+    if (allowed.size === 0) {
+      return res.status(503).json({ error: "Aucun mot de passe administrateur n'est configure. Definissez ADMIN_PASSWORD dans les variables d'environnement." });
+    }
 
     if (allowed.has(password)) {
       return next();
@@ -866,6 +879,9 @@ apiRouter.get("/public-state", async (req, res) => {
     whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
     presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
     presentationVideoPath: db.presentationVideoPath || "",
+    comingSoonEnabled: db.comingSoonEnabled === true,
+    comingSoonDate: db.comingSoonDate || "",
+    comingSoonMessage: db.comingSoonMessage || "",
     paymentAmount: db.paymentAmount ?? 50,
     paymentCurrency: db.paymentCurrency || "USD",
     originalPrice: db.originalPrice ?? 100,
@@ -884,7 +900,7 @@ apiRouter.post("/verify-code", async (req, res) => {
   const db = await getDB();
   const trimmedCode = code.toString().trim().toUpperCase();
 
-  const isMaster = ["19990001999", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].filter(c => c !== "ADMIN").includes(trimmedCode);
+  const isMaster = [ENV_MASTER_ACCESS_CODE.toUpperCase(), (db.adminPassword || "").toUpperCase(), ENV_ADMIN_PASSWORD.toUpperCase()].filter(c => c && c !== "ADMIN").includes(trimmedCode);
 
   let codeIndex = db.codes.findIndex((c) => c.code && c.code.toString().trim().toUpperCase() === trimmedCode);
 
@@ -1025,7 +1041,7 @@ apiRouter.post("/payments/create-session", async (req, res) => {
   }
 
   const db = await getDB();
-  const apiKey = db.monerooSecretKey || process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
+  const apiKey = db.monerooSecretKey || ENV_MONEROO_SECRET_KEY;
   if (!apiKey) {
     return res.status(400).json({ error: "La clé API de paiement Moneroo n'est pas encore configurée par l'administrateur de l'Académie." });
   }
@@ -1058,7 +1074,7 @@ apiRouter.post("/payments/create-session", async (req, res) => {
   // Dynamic Currency Conversion (USD to XOF) via ExchangeRate API (with 2.5s timeout)
   const usdAmount = Number(db.paymentAmount) > 0 ? Number(db.paymentAmount) : 50;
   let xofAmount = Math.round(usdAmount * 575); // default fallback (~575 XOF per USD)
-  const rateApiKey = db.exchangeRateApiKey || process.env.EXCHANGE_RATE_API_KEY || "b61ca475a57776dc1ed72aba";
+  const rateApiKey = db.exchangeRateApiKey || ENV_EXCHANGE_RATE_API_KEY;
   if (rateApiKey) {
     try {
       const rateController = new AbortController();
@@ -1192,7 +1208,7 @@ apiRouter.post("/payments/verify", async (req, res) => {
     }
   }
 
-  const apiKey = db.monerooSecretKey || process.env.MONEROO_SECRET_KEY || "pvk_c3bgra|01KXWSCE4NCPHS1D69JPKC1K03";
+  const apiKey = db.monerooSecretKey || ENV_MONEROO_SECRET_KEY;
   let isApproved = false;
 
   if (apiKey && payment.monerooId) {
@@ -1372,7 +1388,7 @@ apiRouter.post("/payments/webhook", async (req, res) => {
 
 // Admin Update Settings
 apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
-  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath, paymentAmount, paymentCurrency } = req.body;
+  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath, comingSoonEnabled, comingSoonDate, comingSoonMessage, paymentAmount, paymentCurrency } = req.body;
   const db = await getDB();
   db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
   db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
@@ -1381,6 +1397,9 @@ apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
   db.whatsappLink = whatsappLink ? whatsappLink.trim() : "";
   db.presentationVideoUrl = presentationVideoUrl ? presentationVideoUrl.trim() : "";
   db.presentationVideoPath = presentationVideoPath !== undefined ? presentationVideoPath.trim() : "";
+  if (comingSoonEnabled !== undefined) db.comingSoonEnabled = comingSoonEnabled === true || comingSoonEnabled === "true";
+  if (comingSoonDate !== undefined) db.comingSoonDate = String(comingSoonDate || "").trim();
+  if (comingSoonMessage !== undefined) db.comingSoonMessage = String(comingSoonMessage || "").trim();
   if (paymentAmount !== undefined && paymentAmount !== "") {
     const parsedAmount = Number(paymentAmount);
     if (!isNaN(parsedAmount) && parsedAmount > 0) db.paymentAmount = parsedAmount;
@@ -1401,7 +1420,7 @@ apiRouter.post("/profile", async (req, res) => {
 
   const db = await getDB();
   const trimmedCode = code.toString().trim().toUpperCase();
-  const isMaster = ["19990001999", (db.adminPassword || "").toUpperCase(), (process.env.ADMIN_PASSWORD || "").toUpperCase()].filter(c => c !== "ADMIN").includes(trimmedCode);
+  const isMaster = [ENV_MASTER_ACCESS_CODE.toUpperCase(), (db.adminPassword || "").toUpperCase(), ENV_ADMIN_PASSWORD.toUpperCase()].filter(c => c && c !== "ADMIN").includes(trimmedCode);
 
   let foundCode = db.codes.find(c => c.code && c.code.toString().trim().toUpperCase() === trimmedCode);
 
@@ -1547,6 +1566,9 @@ apiRouter.get("/admin/data", checkAdmin, async (req, res) => {
     whatsappLink: db.whatsappLink || "https://wa.me/33600000000",
     presentationVideoUrl: db.presentationVideoUrl || "https://www.youtube.com/embed/8m9g_b95Eto",
     presentationVideoPath: db.presentationVideoPath || "",
+    comingSoonEnabled: db.comingSoonEnabled === true,
+    comingSoonDate: db.comingSoonDate || "",
+    comingSoonMessage: db.comingSoonMessage || "",
     paymentAmount: db.paymentAmount || 50,
     paymentCurrency: db.paymentCurrency || "USD",
     pendingPayments: db.pendingPayments || []

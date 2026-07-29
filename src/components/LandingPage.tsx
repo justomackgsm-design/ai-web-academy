@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   ArrowRight,
   Play,
@@ -175,7 +175,23 @@ export default function LandingPage({
 }: LandingPageProps) {
   const [showVideo, setShowVideo] = useState(false);
   const videoEmbedUrl = getYoutubeEmbedUrl(presentationVideoUrl);
-  const hasVideo = presentationVideoPath || videoEmbedUrl;
+
+  // Une vidéo choisie dans la galerie peut être stockée soit comme URL complète
+  // (Cloudinary / Vercel Blob), soit comme simple nom de fichier sur le serveur.
+  // Dans le second cas il faut passer par la route de streaming publique,
+  // sinon le navigateur cherche le fichier à la racine du site et la vidéo
+  // ne s'affiche pas.
+  const resolvedVideoSrc = useMemo(() => {
+    const raw = (presentationVideoPath || "").trim();
+    if (!raw) return "";
+    if (/^(https?:|blob:|data:)/i.test(raw)) return raw;
+    if (raw.startsWith("/api/public-video/")) return raw;
+    const filename = raw.split(/[\\/]/).pop() || raw;
+    return `/api/public-video/${encodeURIComponent(filename)}`;
+  }, [presentationVideoPath]);
+
+  const hasVideo = resolvedVideoSrc || videoEmbedUrl;
+
 
   const currencySymbol = publicPaymentCurrency === "USD" ? "$" : publicPaymentCurrency === "EUR" ? "€" : publicPaymentCurrency;
   const displayPrice = `${publicPaymentAmount.toLocaleString("fr-FR")} ${currencySymbol} ${publicPaymentCurrency}`;
@@ -473,10 +489,10 @@ export default function LandingPage({
 
               {/* Video player */}
               <div className="relative aspect-video bg-slate-950">
-                {presentationVideoPath ? (
+                {resolvedVideoSrc ? (
                   <video
-                    key={presentationVideoPath}
-                    src={presentationVideoPath}
+                    key={resolvedVideoSrc}
+                    src={resolvedVideoSrc}
                     controls
                     className="w-full h-full object-contain"
                     controlsList="nodownload"
@@ -1034,9 +1050,9 @@ export default function LandingPage({
                 <X className="w-5 h-5" />
               </button>
               <div className="bg-slate-950 rounded-2xl overflow-hidden border border-white/10 shadow-2xl aspect-video">
-                {presentationVideoPath ? (
+                {resolvedVideoSrc ? (
                   <video
-                    src={presentationVideoPath}
+                    src={resolvedVideoSrc}
                     controls
                     autoPlay
                     className="w-full h-full"

@@ -1,0 +1,13 @@
+{
+  "name": "AI Web Academy",
+  "short_name": "AI Web Academy",
+  "description": "Formation complète pour créer des sites web et applications avec l'Intelligence Artificielle.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090C26",
+  "theme_color": "#4F46E5",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "/favicon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
