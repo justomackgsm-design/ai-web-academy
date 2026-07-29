@@ -324,6 +324,90 @@ export default function LandingPage({
                 )}
               </motion.div>
 
+              {/* Accès rapide : code de suivi de formation */}
+              <motion.div
+                className="w-full max-w-md mx-auto lg:mx-0"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.45 }}
+              >
+                <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-4">
+                  <div className="flex items-center space-x-2 mb-2.5">
+                    <Lock className="w-3.5 h-3.5 text-indigo-300" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-200">
+                      Déjà inscrit ? Entrez votre code de suivi de formation
+                    </span>
+                  </div>
+                  <form onSubmit={handleVerifyCode} className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={inputCode}
+                      onChange={(e) => setInputCode(e.target.value.toUpperCase())}
+                      placeholder="IA-XXXX-XXXX"
+                      className="flex-1 bg-slate-950/50 border border-white/15 focus:border-indigo-400 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 font-mono tracking-wider focus:outline-none transition-colors"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isVerifying}
+                      className="bg-white hover:bg-slate-100 disabled:opacity-60 text-slate-900 font-bold px-5 py-3 rounded-xl text-sm transition-all flex items-center justify-center space-x-2"
+                    >
+                      {isVerifying ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <>
+                          <span>Accéder</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </form>
+                  {verificationError && (
+                    <p className="mt-2 flex items-start space-x-1.5 text-[11px] text-red-300">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                      <span>{verificationError}</span>
+                    </p>
+                  )}
+                  {verificationSuccess && (
+                    <p className="mt-2 flex items-start space-x-1.5 text-[11px] text-emerald-300">
+                      <CheckCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                      <span>{verificationSuccess}</span>
+                    </p>
+                  )}
+                  <p className="mt-2 flex items-start space-x-1.5 text-[10px] text-slate-400 leading-relaxed">
+                    <Shield className="w-3 h-3 shrink-0 mt-0.5 text-indigo-300" />
+                    <span>
+                      Protection anti-partage : votre code se verrouille automatiquement sur le premier appareil utilisé.
+                    </span>
+                  </p>
+                </div>
+              </motion.div>
+
+              {/* Programme de parrainage */}
+              <motion.div
+                className="w-full max-w-md mx-auto lg:mx-0"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.55 }}
+              >
+                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
+                  <div className="flex items-start space-x-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
+                      <Users className="w-4 h-4 text-emerald-300" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-emerald-200 uppercase tracking-wider">
+                        Programme de parrainage — 5 $ par filleul
+                      </p>
+                      <p className="mt-1 text-[11px] text-emerald-100/80 leading-relaxed">
+                        Dès votre inscription, récupérez votre code de parrainage personnel. Chaque personne
+                        inscrite grâce à votre code vous rapporte <span className="font-bold text-white">5 $</span>,
+                        cumulables et retirables directement depuis votre espace étudiant.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+
               {/* Price preview */}
               <motion.div
                 className="flex items-center justify-center lg:justify-start gap-2 text-sm"
