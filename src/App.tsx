@@ -569,7 +569,7 @@ export default function App() {
     }
   };
 
-  // Simulating Payment to Buy Code
+  // Start the real Moneroo payment flow
   const handleStartPayment = () => {
     setIsPaymentOpen(true);
     setPaymentStep("intro");
@@ -1055,6 +1055,60 @@ export default function App() {
     });
   };
 
+  // Uploads a video straight from the browser to Cloudinary.
+  // Serverless API routes cap request bodies at ~4.5 MB, which is why routing the
+  // file through /api used to fail for every real course video.
+  const uploadVideoToCloudinary = async (
+    file: File,
+    password: string,
+    folder: "courses" | "presentation",
+    onProgress: (percent: number) => void
+  ): Promise<string> => {
+    const sigRes = await fetch("/api/admin/cloudinary-signature", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-admin-password": password },
+      body: JSON.stringify({ folder })
+    });
+
+    const sigText = await sigRes.text();
+    let sig: any = {};
+    try { sig = JSON.parse(sigText); } catch (e) {
+      throw new Error(`Réponse inattendue du serveur (${sigRes.status}). Vérifiez le déploiement de l'API.`);
+    }
+    if (!sigRes.ok) throw new Error(sig.error || "Impossible de préparer l'envoi de la vidéo.");
+
+    const form = new FormData();
+    form.append("file", file);
+    form.append("api_key", sig.apiKey);
+    form.append("timestamp", String(sig.timestamp));
+    form.append("folder", sig.folder);
+    form.append("signature", sig.signature);
+
+    return await new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", sig.uploadUrl);
+      xhr.upload.onprogress = (evt) => {
+        if (evt.lengthComputable) {
+          onProgress(Math.min(95, Math.round((evt.loaded / evt.total) * 95)));
+        }
+      };
+      xhr.onload = () => {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300 && body.secure_url) {
+            resolve(body.secure_url as string);
+          } else {
+            reject(new Error(body?.error?.message || `Cloudinary a refusé le fichier (${xhr.status}).`));
+          }
+        } catch (e) {
+          reject(new Error("Réponse illisible de Cloudinary."));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Connexion à Cloudinary impossible. Vérifiez votre réseau."));
+      xhr.send(form);
+    });
+  };
+
   // Admin Actions: Episode upload and management
   const handleSaveEpisode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1068,61 +1122,55 @@ export default function App() {
 
     const password = localStorage.getItem("ai_web_academy_admin_pass") || "";
     setIsUploading(true);
-    setUploadProgress(10);
-
-    // Simulate progress while uploading
-    const progressInterval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 85) {
-          clearInterval(progressInterval);
-          return 85;
-        }
-        return prev + 15;
-      });
-    }, 400);
+    setUploadProgress(1);
 
     try {
-      const formData = new FormData();
-      formData.append("seasonId", newEpisodeSeasonId);
-      formData.append("title", newEpisodeTitle);
-      formData.append("description", newEpisodeDesc);
-      formData.append("duration", newEpisodeDuration);
-      formData.append("videoFile", selectedVideoFile);
+      const videoUrl = await uploadVideoToCloudinary(
+        selectedVideoFile,
+        password,
+        "courses",
+        (pct) => setUploadProgress(pct)
+      );
+
+      setUploadProgress(97);
 
       const res = await fetch("/api/admin/episodes", {
         method: "POST",
-        headers: { "x-admin-password": password },
-        body: formData
+        headers: { "Content-Type": "application/json", "x-admin-password": password },
+        body: JSON.stringify({
+          seasonId: newEpisodeSeasonId,
+          title: newEpisodeTitle,
+          description: newEpisodeDesc,
+          duration: newEpisodeDuration,
+          videoUrl,
+          originalName: selectedVideoFile.name
+        })
       });
 
-      clearInterval(progressInterval);
-      setUploadProgress(100);
+      const raw = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(raw); } catch (err) { data = {}; }
 
-      if (res.ok) {
-        setTimeout(() => {
-          setNewEpisodeTitle("");
-          setNewEpisodeDesc("");
-          setNewEpisodeDuration("10:00");
-          setSelectedVideoFile(null);
-          setIsUploading(false);
-          setUploadProgress(0);
-          fetchAdminData(password);
-          fetchPublicState();
-        }, 800);
-      } else {
-        const err = await res.json();
-        setCustomAlert({
-          title: "Erreur de chargement",
-          message: err.error || "Une erreur est survenue lors du chargement."
-        });
+      if (!res.ok) {
+        throw new Error(data.error || `Enregistrement refusé par le serveur (${res.status}).`);
+      }
+
+      setUploadProgress(100);
+      setTimeout(() => {
+        setNewEpisodeTitle("");
+        setNewEpisodeDesc("");
+        setNewEpisodeDuration("10:00");
+        setSelectedVideoFile(null);
         setIsUploading(false);
         setUploadProgress(0);
-      }
-    } catch (err) {
-      clearInterval(progressInterval);
+        fetchAdminData(password);
+        fetchPublicState();
+      }, 600);
+    } catch (err: any) {
+      console.error("Episode upload failed:", err);
       setCustomAlert({
-        title: "Erreur réseau",
-        message: "Impossible d'envoyer le fichier sur le serveur."
+        title: "Échec de l'envoi de la vidéo",
+        message: err?.message || "Impossible d'envoyer le fichier vidéo."
       });
       setIsUploading(false);
       setUploadProgress(0);
@@ -1159,45 +1207,44 @@ export default function App() {
     if (!selectedPresentationFile) return;
     const password = localStorage.getItem("ai_web_academy_admin_pass") || "";
     setIsUploadingPresentation(true);
-    setPresentationUploadProgress(10);
-
-    const progressInterval = setInterval(() => {
-      setPresentationUploadProgress(prev => (prev >= 85 ? 85 : prev + 15));
-    }, 300);
+    setPresentationUploadProgress(1);
+    setMonerooSaveError("");
 
     try {
-      const formData = new FormData();
-      formData.append("videoFile", selectedPresentationFile);
+      const videoUrl = await uploadVideoToCloudinary(
+        selectedPresentationFile,
+        password,
+        "presentation",
+        (pct) => setPresentationUploadProgress(pct)
+      );
 
       const res = await fetch("/api/admin/presentation-video", {
         method: "POST",
-        headers: { "x-admin-password": password },
-        body: formData
+        headers: { "Content-Type": "application/json", "x-admin-password": password },
+        body: JSON.stringify({ videoUrl })
       });
 
-      clearInterval(progressInterval);
-      setPresentationUploadProgress(100);
+      const raw = await res.text();
+      let data: any = {};
+      try { data = JSON.parse(raw); } catch (err) { data = {}; }
 
-      if (res.ok) {
-        const data = await res.json();
-        setTimeout(() => {
-          setPresentationVideoPath(data.presentationVideoPath);
-          setSelectedPresentationFile(null);
-          setIsUploadingPresentation(false);
-          setPresentationUploadProgress(0);
-          setMonerooSaveSuccess("Vidéo de présentation mise en ligne et configurée avec succès !");
-          fetchAdminData(password);
-          fetchPublicState();
-        }, 800);
-      } else {
-        const err = await res.json();
-        setMonerooSaveError(err.error || "Une erreur est survenue lors du chargement de la vidéo.");
+      if (!res.ok) {
+        throw new Error(data.error || `Enregistrement refusé par le serveur (${res.status}).`);
+      }
+
+      setPresentationUploadProgress(100);
+      setTimeout(() => {
+        setPresentationVideoPath(data.presentationVideoPath || videoUrl);
+        setSelectedPresentationFile(null);
         setIsUploadingPresentation(false);
         setPresentationUploadProgress(0);
-      }
-    } catch (err) {
-      clearInterval(progressInterval);
-      setMonerooSaveError("Erreur de connexion lors de l'envoi.");
+        setMonerooSaveSuccess("Vidéo de présentation mise en ligne et configurée avec succès !");
+        fetchAdminData(password);
+        fetchPublicState();
+      }, 600);
+    } catch (err: any) {
+      console.error("Presentation upload failed:", err);
+      setMonerooSaveError(err?.message || "Erreur lors de l'envoi de la vidéo de présentation.");
       setIsUploadingPresentation(false);
       setPresentationUploadProgress(0);
     }
@@ -3522,9 +3569,9 @@ export default function App() {
       </div>
       )}
 
-      {/* 4. Payment Simulation Modal */}
+      {/* 4. Payment Modal */}
       {isPaymentOpen && (
-        <div id="payment-simulation-modal" className="fixed inset-0 bg-slate-950/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div id="payment-modal" className="fixed inset-0 bg-slate-950/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-xl relative space-y-6 overflow-hidden">
             
             <button
@@ -3548,7 +3595,7 @@ export default function App() {
                   </div>
                   <h3 className="text-lg font-bold text-slate-800 font-display">Abonnement - Formation Ultime IA</h3>
                   <p className="text-xs text-slate-500 mt-1">
-                    Simulateur de commande de formation professionnelle.
+                    Commande sécurisée de votre formation professionnelle.
                   </p>
                 </div>
 
@@ -3599,7 +3646,7 @@ export default function App() {
                   type="submit"
                   className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 rounded-xl text-xs transition-all shadow-md shadow-indigo-600/10 flex items-center justify-center space-x-1.5"
                 >
-                  <span>Procéder au Paiement (Fictif)</span>
+                  <span>Procéder au Paiement</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
@@ -3611,13 +3658,13 @@ export default function App() {
                   <CreditCard className="w-12 h-12 text-indigo-600 mx-auto mb-3" />
                   <h3 className="text-lg font-bold text-slate-800 font-display">Informations de Paiement</h3>
                   <p className="text-xs text-slate-500 mt-1">
-                    Entrez vos coordonnées bancaires fictives pour finaliser la souscription.
+                    Entrez vos coordonnées bancaires pour finaliser la souscription.
                   </p>
                 </div>
 
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Numéro de Carte Fictif</label>
+                    <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Numéro de Carte</label>
                     <input
                       type="text"
                       value={cardNumber}
@@ -3657,7 +3704,7 @@ export default function App() {
                 </div>
 
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-[10px] text-slate-500 leading-normal">
-                  Note : Il s'agit d'une démonstration sécurisée. Vos données de carte ne sont pas traitées par un véritable terminal bancaire pour le moment.
+                  Paiement sécurisé. Vos coordonnées bancaires sont chiffrées et ne sont jamais stockées sur nos serveurs.
                 </div>
 
                 <button

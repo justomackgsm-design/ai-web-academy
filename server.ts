@@ -723,6 +723,14 @@ async function uploadToBlobIfNeeded(file: Express.Multer.File): Promise<string> 
 }
 
 
+function getCloudinaryConfig() {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (!cloudName || !apiKey || !apiSecret) return null;
+  return { cloudName, apiKey, apiSecret };
+}
+
 async function ensurePostgresInit() {
   if (!pool || postgresInitialized) return;
   if (!initPromise) {
@@ -754,9 +762,21 @@ app.use(async (req, res, next) => {
 });
 
 // Setup multer for local file uploads
+const TMP_UPLOADS_DIR = "/tmp/uploads";
+try {
+  if (!fs.existsSync(TMP_UPLOADS_DIR)) fs.mkdirSync(TMP_UPLOADS_DIR, { recursive: true });
+} catch (e) {}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, UPLOADS_DIR);
+    // On serverless (Vercel) the project filesystem is read-only: only /tmp is writable.
+    let target = TMP_UPLOADS_DIR;
+    try {
+      if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true });
+    } catch (e) {
+      target = UPLOADS_DIR;
+    }
+    cb(null, target);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
@@ -1691,8 +1711,46 @@ apiRouter.delete("/admin/seasons/:id", checkAdmin, async (req, res) => {
   res.json({ success: true, message: "Saison supprimée ainsi que tous ses épisodes." });
 });
 
-// Admin Create Episode (Support Vercel Blob or local storage)
+// Admin: signature for direct browser -> Cloudinary upload.
+// Serverless functions cap request bodies at ~4.5 MB, so course videos must NEVER
+// transit through this API. The browser uploads straight to Cloudinary with this signature.
+apiRouter.post("/admin/cloudinary-signature", checkAdmin, async (req, res) => {
+  const config = getCloudinaryConfig();
+  if (!config) {
+    return res.status(400).json({
+      error: "Cloudinary n'est pas configuré. Ajoutez CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY et CLOUDINARY_API_SECRET dans les variables d'environnement Vercel, puis redéployez."
+    });
+  }
+
+  try {
+    const folder = (req.body && req.body.folder) === "presentation"
+      ? "ai-academy-presentation"
+      : "ai-academy-courses";
+    const timestamp = Math.round(Date.now() / 1000);
+
+    const signature = cloudinary.utils.api_sign_request(
+      { folder, timestamp },
+      config.apiSecret
+    );
+
+    res.json({
+      success: true,
+      cloudName: config.cloudName,
+      apiKey: config.apiKey,
+      timestamp,
+      folder,
+      signature,
+      uploadUrl: `https://api.cloudinary.com/v1_1/${config.cloudName}/video/upload`
+    });
+  } catch (err: any) {
+    console.error("Cloudinary signature error:", err);
+    res.status(500).json({ error: "Impossible de générer la signature Cloudinary: " + (err.message || "") });
+  }
+});
+
+// Admin Create Episode (Cloudinary URL, or small file fallback)
 apiRouter.post("/admin/episodes", checkAdmin, upload.single("videoFile"), async (req, res) => {
+  try {
   const { seasonId, title, description, videoUrl, duration } = req.body;
   
   if (!seasonId || !title) {
@@ -1702,12 +1760,12 @@ apiRouter.post("/admin/episodes", checkAdmin, upload.single("videoFile"), async 
   let finalVideoPath = "";
   let originalName = "";
 
-  if (req.file) {
+  if (videoUrl && String(videoUrl).trim()) {
+    finalVideoPath = String(videoUrl).trim();
+    originalName = (req.body.originalName && String(req.body.originalName).trim()) || "Vidéo Cloudinary";
+  } else if (req.file) {
     originalName = req.file.originalname;
     finalVideoPath = await uploadToBlobIfNeeded(req.file);
-  } else if (videoUrl) {
-    finalVideoPath = videoUrl.trim();
-    originalName = "External Video";
   } else {
     return res.status(400).json({ error: "Veuillez uploader un fichier vidéo ou fournir une URL." });
   }
@@ -1728,6 +1786,10 @@ apiRouter.post("/admin/episodes", checkAdmin, upload.single("videoFile"), async 
   await writeDB(db);
 
   res.json({ success: true, episode: newEpisode });
+  } catch (err: any) {
+    console.error("Create episode failed:", err);
+    res.status(500).json({ error: err?.message || "Erreur lors de l'enregistrement de l'épisode." });
+  }
 });
 
 // Admin Delete Episode
@@ -1753,18 +1815,19 @@ apiRouter.delete("/admin/episodes/:id", checkAdmin, async (req, res) => {
 
 // Admin upload custom presentation video
 apiRouter.post("/admin/presentation-video", checkAdmin, upload.single("videoFile"), async (req, res) => {
-  if (!req.file) {
+  const providedUrl = req.body && req.body.videoUrl ? String(req.body.videoUrl).trim() : "";
+  if (!req.file && !providedUrl) {
     return res.status(400).json({ error: "Fichier vidéo manquant." });
   }
   try {
-    const finalVideoPath = await uploadToBlobIfNeeded(req.file);
+    const finalVideoPath = providedUrl || await uploadToBlobIfNeeded(req.file as Express.Multer.File);
     const db = await getDB();
     db.presentationVideoPath = finalVideoPath;
     await writeDB(db);
     res.json({ success: true, presentationVideoPath: finalVideoPath });
   } catch (err) {
     console.error("Error setting presentation video:", err);
-    res.status(500).json({ error: "Erreur lors du traitement de la vidéo de présentation." });
+    res.status(500).json({ error: (err as any)?.message || "Erreur lors du traitement de la vidéo de présentation." });
   }
 });
 
