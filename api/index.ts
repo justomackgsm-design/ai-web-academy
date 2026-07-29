@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
-import app from "./_server.js";
+// Import TypeScript source directly — Vercel compiles it natively, no esbuild cache
+import app from "../server.js";
 
 export default function handler(req: Request, res: Response) {
-  return app(req as any, res as any);
+  return (app as any)(req, res);
 }
