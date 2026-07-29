@@ -162,6 +162,8 @@ let pool: Pool | null = null;
 let dbCache: DBState | null = null;
 let dbCacheTime: number = 0;
 const DB_CACHE_TTL_MS = 30000; // 30 seconds — allows changes to propagate across serverless instances
+let postgresInitialized = false;
+let initPromise: Promise<void> | null = null;
 
 if (dbUrl) {
   console.log("Connecting to PostgreSQL (Neon) Database...");
