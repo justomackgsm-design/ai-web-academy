@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import { Pool } from "pg";
 import { v2 as cloudinary } from "cloudinary";
 import { Readable } from "stream";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -83,6 +84,13 @@ interface DBState {
   originalPrice?: number;
   promoPrice?: number;
   isPromoActive?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPassword?: string;
+  senderName?: string;
+  senderEmail?: string;
   pendingPayments?: Array<{
     id: string;
     firstName: string;
@@ -290,6 +298,13 @@ async function initPostgres() {
       ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS original_price NUMERIC(12, 2) DEFAULT 100;
       ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS promo_price NUMERIC(12, 2) DEFAULT 50;
       ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS is_promo_active BOOLEAN DEFAULT TRUE;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS smtp_host TEXT;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS smtp_port INT DEFAULT 587;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS smtp_secure BOOLEAN DEFAULT FALSE;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS smtp_user TEXT;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS smtp_password TEXT;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS sender_name TEXT;
+      ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS sender_email TEXT;
     `);
     console.log("All Neon PostgreSQL database tables verified/created successfully.");
 
@@ -321,8 +336,8 @@ async function syncToRelationalTables(state: DBState) {
   try {
     // 1. Admin Settings
     await pool.query(`
-      INSERT INTO admin_settings (id, admin_password, moneroo_secret_key, moneroo_public_key, exchange_rate_api_key, telegram_link, whatsapp_link, presentation_video_url, presentation_video_path, payment_amount, payment_currency, original_price, promo_price, is_promo_active)
-      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      INSERT INTO admin_settings (id, admin_password, moneroo_secret_key, moneroo_public_key, exchange_rate_api_key, telegram_link, whatsapp_link, presentation_video_url, presentation_video_path, payment_amount, payment_currency, original_price, promo_price, is_promo_active, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_password, sender_name, sender_email)
+      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       ON CONFLICT (id) DO UPDATE SET
         admin_password = EXCLUDED.admin_password,
         moneroo_secret_key = EXCLUDED.moneroo_secret_key,
@@ -336,7 +351,14 @@ async function syncToRelationalTables(state: DBState) {
         payment_currency = EXCLUDED.payment_currency,
         original_price = EXCLUDED.original_price,
         promo_price = EXCLUDED.promo_price,
-        is_promo_active = EXCLUDED.is_promo_active;
+        is_promo_active = EXCLUDED.is_promo_active,
+        smtp_host = EXCLUDED.smtp_host,
+        smtp_port = EXCLUDED.smtp_port,
+        smtp_secure = EXCLUDED.smtp_secure,
+        smtp_user = EXCLUDED.smtp_user,
+        smtp_password = EXCLUDED.smtp_password,
+        sender_name = EXCLUDED.sender_name,
+        sender_email = EXCLUDED.sender_email;
     `, [
       state.adminPassword || ENV_ADMIN_PASSWORD,
       state.monerooSecretKey || "",
@@ -350,7 +372,14 @@ async function syncToRelationalTables(state: DBState) {
       state.paymentCurrency || "USD",
       state.originalPrice ?? 100,
       state.promoPrice ?? 50,
-      state.isPromoActive ?? true
+      state.isPromoActive ?? true,
+      state.smtpHost || "",
+      state.smtpPort ?? 587,
+      state.smtpSecure ?? false,
+      state.smtpUser || "",
+      state.smtpPassword || "",
+      state.senderName || "",
+      state.senderEmail || ""
     ]);
 
     // 2. Seasons
@@ -484,6 +513,13 @@ async function getDB(): Promise<DBState> {
       let originalPrice = 100;
       let promoPrice = 50;
       let isPromoActive = true;
+      let smtpHost = "";
+      let smtpPort = 587;
+      let smtpSecure = false;
+      let smtpUser = "";
+      let smtpPassword = "";
+      let senderName = "";
+      let senderEmail = "";
 
       if (settingsRes.rows.length > 0) {
         const s = settingsRes.rows[0];
@@ -500,6 +536,13 @@ async function getDB(): Promise<DBState> {
         if (s.original_price) originalPrice = Number(s.original_price);
         if (s.promo_price) promoPrice = Number(s.promo_price);
         if (s.is_promo_active !== undefined && s.is_promo_active !== null) isPromoActive = Boolean(s.is_promo_active);
+        if (s.smtp_host) smtpHost = s.smtp_host;
+        if (s.smtp_port) smtpPort = Number(s.smtp_port);
+        if (s.smtp_secure !== undefined && s.smtp_secure !== null) smtpSecure = Boolean(s.smtp_secure);
+        if (s.smtp_user) smtpUser = s.smtp_user;
+        if (s.smtp_password) smtpPassword = s.smtp_password;
+        if (s.sender_name) senderName = s.sender_name;
+        if (s.sender_email) senderEmail = s.sender_email;
       }
 
       const seasonsRes = await pool.query(`SELECT * FROM seasons ORDER BY id ASC`);
@@ -578,7 +621,14 @@ async function getDB(): Promise<DBState> {
         monerooSecretKey,
         exchangeRateApiKey,
         presentationVideoUrl,
-        presentationVideoPath
+        presentationVideoPath,
+        smtpHost,
+        smtpPort,
+        smtpSecure,
+        smtpUser,
+        smtpPassword,
+        senderName,
+        senderEmail
       };
 
       return dbCache;
@@ -861,6 +911,149 @@ const isCodeValid = async (code: string, deviceId: string): Promise<{ valid: boo
 const apiRouter = express.Router();
 
 // GET Public Info
+
+// ═══════════════════════════════════════════════════════════════
+//  MESSAGERIE PROFESSIONNELLE — envoi automatique des emails
+// ═══════════════════════════════════════════════════════════════
+
+const escapeHtml = (value: string): string =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const buildWelcomeEmail = (params: {
+  firstName: string;
+  accessCode: string;
+  referralCode: string;
+  siteUrl: string;
+}) => {
+  const firstName = escapeHtml(params.firstName) || "Cher étudiant";
+  const accessCode = escapeHtml(params.accessCode);
+  const referralCode = escapeHtml(params.referralCode);
+  const siteUrl = escapeHtml(params.siteUrl);
+
+  const text = [
+    `Félicitations ${firstName} !`,
+    "",
+    "Votre paiement a bien été confirmé et votre accès à vie à AI WEB ACADEMY est désormais actif.",
+    "",
+    `VOTRE CODE DE SUIVI DE FORMATION : ${params.accessCode}`,
+    "",
+    "IMPORTANT — Protection anti-partage :",
+    "Ce code se verrouille automatiquement sur le premier appareil utilisé pour l'activer",
+    "(téléphone ou ordinateur). Il ne pourra plus être utilisé ailleurs.",
+    "Ne le partagez avec personne : tout partage entraîne la perte de votre accès.",
+    "",
+    `VOTRE CODE DE PARRAINAGE : ${params.referralCode}`,
+    "Chaque inscription réalisée avec votre code de parrainage vous rapporte 5 $ USDT,",
+    "retirables directement depuis votre espace étudiant.",
+    "",
+    `Accéder à la formation : ${params.siteUrl}`,
+    "",
+    "À très vite,",
+    "L'équipe AI WEB ACADEMY"
+  ].join("\n");
+
+  const html = `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8" /></head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+  <div style="max-width:600px;margin:0 auto;padding:24px;">
+    <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-radius:20px;padding:28px;color:#ffffff;">
+      <p style="margin:0;font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:.85;">AI Web Academy</p>
+      <h1 style="margin:8px 0 0;font-size:24px;">Félicitations ${firstName} !</h1>
+      <p style="margin:10px 0 0;font-size:14px;line-height:1.6;opacity:.95;">
+        Votre paiement a été confirmé. Votre accès à vie à l'intégralité du cursus est désormais actif.
+      </p>
+    </div>
+
+    <div style="background:#ffffff;border-radius:20px;padding:24px;margin-top:16px;">
+      <p style="margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#64748b;font-weight:bold;">Votre code de suivi de formation</p>
+      <p style="margin:0;font-size:22px;font-weight:bold;letter-spacing:2px;color:#4f46e5;font-family:monospace;">${accessCode}</p>
+
+      <div style="margin-top:20px;background:#fff7ed;border:1px solid #fed7aa;border-radius:14px;padding:16px;">
+        <p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#9a3412;">Protection anti-partage</p>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#7c2d12;">
+          Ce code se verrouille <strong>automatiquement</strong> sur le premier appareil utilisé pour l'activer
+          (téléphone ou ordinateur) et ne fonctionnera sur aucun autre appareil.
+          <strong>Ne le partagez avec personne</strong> : tout partage entraîne la perte définitive de votre accès.
+        </p>
+      </div>
+
+      <div style="margin-top:16px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:14px;padding:16px;">
+        <p style="margin:0 0 6px;font-size:13px;font-weight:bold;color:#065f46;">Gagnez 5 $ par parrainage</p>
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#047857;">
+          Votre code de parrainage : <strong style="font-family:monospace;">${referralCode}</strong><br />
+          Chaque inscription réalisée avec ce code vous rapporte <strong>5 $ USDT</strong>, retirables
+          depuis votre espace étudiant.
+        </p>
+      </div>
+
+      <p style="margin:22px 0 0;text-align:center;">
+        <a href="${siteUrl}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:14px 26px;border-radius:12px;">Accéder à ma formation</a>
+      </p>
+    </div>
+
+    <p style="margin:18px 0 0;text-align:center;font-size:11px;color:#94a3b8;line-height:1.6;">
+      Vous recevez cet email suite à votre inscription à AI Web Academy.<br />Merci de conserver ce message en lieu sûr.
+    </p>
+  </div>
+</body></html>`;
+
+  return { text, html };
+};
+
+// Envoie un email via la configuration SMTP définie dans l'interface administrateur.
+// Ne bloque jamais le flux de paiement : toute erreur est simplement journalisée.
+async function sendMail(db: DBState, to: string, subject: string, html: string, text: string): Promise<boolean> {
+  const host = (db.smtpHost || process.env.SMTP_HOST || "").trim();
+  const user = (db.smtpUser || process.env.SMTP_USER || "").trim();
+  const pass = (db.smtpPassword || process.env.SMTP_PASSWORD || "").trim();
+  const fromEmail = (db.senderEmail || process.env.SMTP_FROM_EMAIL || user).trim();
+  const fromName = (db.senderName || process.env.SMTP_FROM_NAME || "AI Web Academy").trim();
+  const port = Number(db.smtpPort || process.env.SMTP_PORT || 587);
+  const secure = db.smtpSecure !== undefined ? Boolean(db.smtpSecure) : port === 465;
+
+  if (!host || !user || !pass || !fromEmail || !to) {
+    console.warn("Email non envoyé : configuration de la messagerie incomplète.");
+    return false;
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass }
+    });
+    await transporter.sendMail({
+      from: `"${fromName}" <${fromEmail}>`,
+      to,
+      subject,
+      text,
+      html
+    });
+    console.log(`Email envoyé avec succès à ${to}`);
+    return true;
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de l'email:", err);
+    return false;
+  }
+}
+
+async function sendWelcomeEmail(db: DBState, params: { to: string; firstName: string; accessCode: string; referralCode: string }) {
+  if (!params.to) return false;
+  const siteUrl = (process.env.APP_URL || "https://ai-web-academy.vercel.app").trim();
+  const { html, text } = buildWelcomeEmail({
+    firstName: params.firstName,
+    accessCode: params.accessCode,
+    referralCode: params.referralCode,
+    siteUrl
+  });
+  return sendMail(db, params.to, "Félicitations — voici votre code de suivi de formation", html, text);
+}
+
 apiRouter.get("/public-state", async (req, res) => {
   const db = await getDB();
   const publicEpisodes = db.episodes.map(ep => ({
@@ -1280,6 +1473,14 @@ apiRouter.post("/payments/verify", async (req, res) => {
     db.pendingPayments[paymentIdx] = payment;
     await writeDB(db);
 
+    // Email de félicitations automatique (n'interrompt jamais le paiement)
+    await sendWelcomeEmail(db, {
+      to: payment.email,
+      firstName: payment.firstName,
+      accessCode: newCode,
+      referralCode: newReferralCode
+    });
+
     return res.json({
       success: true,
       code: newCode,
@@ -1379,6 +1580,14 @@ apiRouter.post("/payments/webhook", async (req, res) => {
     db.pendingPayments[idx] = payment;
     await writeDB(db);
 
+    // Email de félicitations automatique (n'interrompt jamais le webhook)
+    await sendWelcomeEmail(db, {
+      to: payment.email,
+      firstName: payment.firstName,
+      accessCode: newCode,
+      referralCode: newReferralCode
+    });
+
     console.log(`Webhook generated code ${newCode} successfully.`);
     return res.json({ success: true, message: "Code generated." });
   }
@@ -1388,7 +1597,7 @@ apiRouter.post("/payments/webhook", async (req, res) => {
 
 // Admin Update Settings
 apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
-  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath, comingSoonEnabled, comingSoonDate, comingSoonMessage, paymentAmount, paymentCurrency } = req.body;
+  const { monerooSecretKey, monerooPublicKey, exchangeRateApiKey, telegramLink, whatsappLink, presentationVideoUrl, presentationVideoPath, comingSoonEnabled, comingSoonDate, comingSoonMessage, paymentAmount, paymentCurrency, originalPrice, promoPrice, isPromoActive, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPassword, senderName, senderEmail } = req.body;
   const db = await getDB();
   db.monerooSecretKey = monerooSecretKey ? monerooSecretKey.trim() : "";
   db.monerooPublicKey = monerooPublicKey ? monerooPublicKey.trim() : "";
@@ -1407,6 +1616,28 @@ apiRouter.post("/admin/settings", checkAdmin, async (req, res) => {
   if (paymentCurrency !== undefined && paymentCurrency !== "") {
     db.paymentCurrency = String(paymentCurrency).trim().toUpperCase();
   }
+  if (originalPrice !== undefined && originalPrice !== "") {
+    const parsedOriginal = Number(originalPrice);
+    if (!isNaN(parsedOriginal) && parsedOriginal >= 0) db.originalPrice = parsedOriginal;
+  }
+  if (promoPrice !== undefined && promoPrice !== "") {
+    const parsedPromo = Number(promoPrice);
+    if (!isNaN(parsedPromo) && parsedPromo >= 0) db.promoPrice = parsedPromo;
+  }
+  if (isPromoActive !== undefined) {
+    db.isPromoActive = isPromoActive === true || isPromoActive === "true";
+  }
+  // Configuration de la messagerie professionnelle (envoi automatique des emails)
+  if (smtpHost !== undefined) db.smtpHost = String(smtpHost || "").trim();
+  if (smtpPort !== undefined && smtpPort !== "") {
+    const parsedPort = Number(smtpPort);
+    if (!isNaN(parsedPort) && parsedPort > 0) db.smtpPort = parsedPort;
+  }
+  if (smtpSecure !== undefined) db.smtpSecure = smtpSecure === true || smtpSecure === "true";
+  if (smtpUser !== undefined) db.smtpUser = String(smtpUser || "").trim();
+  if (smtpPassword !== undefined && String(smtpPassword).trim() !== "") db.smtpPassword = String(smtpPassword).trim();
+  if (senderName !== undefined) db.senderName = String(senderName || "").trim();
+  if (senderEmail !== undefined) db.senderEmail = String(senderEmail || "").trim();
   await writeDB(db);
   res.json({ success: true, message: "Configuration mise à jour avec succès !" });
 });
@@ -1571,8 +1802,39 @@ apiRouter.get("/admin/data", checkAdmin, async (req, res) => {
     comingSoonMessage: db.comingSoonMessage || "",
     paymentAmount: db.paymentAmount || 50,
     paymentCurrency: db.paymentCurrency || "USD",
+    originalPrice: db.originalPrice ?? 100,
+    promoPrice: db.promoPrice ?? 50,
+    isPromoActive: db.isPromoActive ?? true,
+    smtpHost: db.smtpHost || "",
+    smtpPort: db.smtpPort ?? 587,
+    smtpSecure: db.smtpSecure ?? false,
+    smtpUser: db.smtpUser || "",
+    smtpPassword: db.smtpPassword || "",
+    senderName: db.senderName || "",
+    senderEmail: db.senderEmail || "",
     pendingPayments: db.pendingPayments || []
   });
+});
+
+// Admin — envoi d'un email de test pour valider la configuration de la messagerie
+apiRouter.post("/admin/test-email", checkAdmin, async (req, res) => {
+  const { to } = req.body;
+  const target = String(to || "").trim();
+  if (!target || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(target)) {
+    return res.status(400).json({ error: "Veuillez indiquer une adresse email valide." });
+  }
+  const db = await getDB();
+  const { html, text } = buildWelcomeEmail({
+    firstName: "Test",
+    accessCode: "IA-TEST-0000",
+    referralCode: "REF-TEST-0000",
+    siteUrl: (process.env.APP_URL || "https://ai-web-academy.vercel.app").trim()
+  });
+  const sent = await sendMail(db, target, "[Test] Configuration de la messagerie AI Web Academy", html, text);
+  if (!sent) {
+    return res.status(500).json({ error: "Envoi impossible. Vérifiez le serveur SMTP, l'identifiant et le mot de passe d'application." });
+  }
+  res.json({ success: true, message: `Email de test envoyé à ${target}.` });
 });
 
 // Admin Change Password
