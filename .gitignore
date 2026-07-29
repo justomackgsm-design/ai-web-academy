@@ -9,3 +9,5 @@ coverage/
 data/uploads/
 api/_server.js
 api/_server.js.map
+data/db.json
+data/*.json

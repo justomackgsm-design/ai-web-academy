@@ -254,6 +254,9 @@ export default function App() {
   const [whatsappLink, setWhatsappLink] = useState<string>("");
   const [presentationVideoUrl, setPresentationVideoUrl] = useState<string>("");
   const [presentationVideoPath, setPresentationVideoPath] = useState<string>("");
+  const [comingSoonEnabled, setComingSoonEnabled] = useState<boolean>(false);
+  const [comingSoonDate, setComingSoonDate] = useState<string>("");
+  const [comingSoonMessage, setComingSoonMessage] = useState<string>("");
   const [monerooSaveSuccess, setMonerooSaveSuccess] = useState<string>("");
   const [monerooSaveError, setMonerooSaveError] = useState<string>("");
   const [isSavingMoneroo, setIsSavingMoneroo] = useState<boolean>(false);
@@ -398,6 +401,9 @@ export default function App() {
         if (data.whatsappLink) setWhatsappLink(data.whatsappLink);
         if (data.presentationVideoUrl) setPresentationVideoUrl(data.presentationVideoUrl);
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
+        if (data.comingSoonEnabled !== undefined) setComingSoonEnabled(Boolean(data.comingSoonEnabled));
+        if (data.comingSoonDate !== undefined) setComingSoonDate(data.comingSoonDate || "");
+        if (data.comingSoonMessage !== undefined) setComingSoonMessage(data.comingSoonMessage || "");
         if (data.exchangeRateApiKey) setExchangeRateApiKey(data.exchangeRateApiKey);
         if (data.paymentAmount !== undefined) setPublicPaymentAmount(data.paymentAmount);
         if (data.paymentCurrency) setPublicPaymentCurrency(data.paymentCurrency);
@@ -491,6 +497,9 @@ export default function App() {
           whatsappLink,
           presentationVideoUrl,
           presentationVideoPath,
+          comingSoonEnabled,
+          comingSoonDate,
+          comingSoonMessage,
           exchangeRateApiKey,
           paymentAmount,
           paymentCurrency
@@ -789,6 +798,9 @@ export default function App() {
         if (data.whatsappLink) setWhatsappLink(data.whatsappLink);
         if (data.presentationVideoUrl) setPresentationVideoUrl(data.presentationVideoUrl);
         if (data.presentationVideoPath !== undefined) setPresentationVideoPath(data.presentationVideoPath);
+        if (data.comingSoonEnabled !== undefined) setComingSoonEnabled(Boolean(data.comingSoonEnabled));
+        if (data.comingSoonDate !== undefined) setComingSoonDate(data.comingSoonDate || "");
+        if (data.comingSoonMessage !== undefined) setComingSoonMessage(data.comingSoonMessage || "");
         if (data.exchangeRateApiKey) setExchangeRateApiKey(data.exchangeRateApiKey);
         localStorage.setItem("ai_web_academy_admin_pass", trimmedPass);
         setIsAdminAuthenticated(true);
@@ -2724,7 +2736,7 @@ export default function App() {
                                 type="text"
                                 value={exchangeRateApiKey}
                                 onChange={(e) => setExchangeRateApiKey(e.target.value)}
-                                placeholder="b61ca475a57776dc1ed72aba"
+                                placeholder="Votre cle ExchangeRate-API"
                                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
                               />
                               <p className="text-[10px] text-slate-400 mt-1">
@@ -2763,6 +2775,65 @@ export default function App() {
                                 className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
                               />
                             </div>
+                            {/* Coming Soon Announcement (student dashboard) */}
+                            <div className="border-t border-slate-100 pt-4 space-y-3">
+                              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                                Annonce « Formation bientôt disponible »
+                              </h4>
+                              <div className={`p-4 rounded-xl border transition-all ${comingSoonEnabled ? "bg-indigo-50 border-indigo-200" : "bg-slate-50 border-slate-200"}`}>
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="space-y-0.5">
+                                    <span className="block text-xs font-semibold text-slate-800">
+                                      Afficher l'annonce sur le tableau de bord des étudiants
+                                    </span>
+                                    <span className="block text-[10px] text-slate-500">
+                                      Quand le bouton est désactivé, la notification disparaît immédiatement chez les étudiants.
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={comingSoonEnabled}
+                                    onClick={() => setComingSoonEnabled(v => !v)}
+                                    className={`relative w-14 h-7 rounded-full flex-shrink-0 transition-all ${comingSoonEnabled ? "bg-indigo-600" : "bg-slate-300"}`}
+                                  >
+                                    <span className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-all ${comingSoonEnabled ? "left-7" : "left-0.5"}`}></span>
+                                  </button>
+                                </div>
+
+                                {comingSoonEnabled && (
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                                    <div>
+                                      <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                                        Date de disponibilité (épinglée)
+                                      </label>
+                                      <input
+                                        type="date"
+                                        value={comingSoonDate}
+                                        onChange={(e) => setComingSoonDate(e.target.value)}
+                                        className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                                        Message personnalisé (optionnel)
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={comingSoonMessage}
+                                        onChange={(e) => setComingSoonMessage(e.target.value)}
+                                        placeholder="Ex : La Saison 5 arrive bientôt !"
+                                        className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                                <p className="text-[10px] text-slate-400 mt-3">
+                                  N'oubliez pas d'enregistrer la configuration pour appliquer le changement.
+                                </p>
+                              </div>
+                            </div>
+
                             {/* Presentation Video Source Settings */}
                             <div className="border-t border-slate-100 pt-4 space-y-4">
                               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -2805,7 +2876,7 @@ export default function App() {
                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
                                   >
                                     <option value="">-- Utiliser le lien YouTube --</option>
-                                    {Array.from(new Set(adminEpisodes.map(ep => ep.videoPath))).map(vPath => {
+                                    {Array.from(new Set(adminEpisodes.map(ep => ep.videoPath).filter(Boolean))).map(vPath => {
                                       const episode = adminEpisodes.find(ep => ep.videoPath === vPath);
                                       return (
                                         <option key={vPath} value={vPath}>
@@ -3118,6 +3189,40 @@ export default function App() {
           /* VERIFIED PORTAL VIEW (L'INTERFACE DE LA FORMATION) */
           <div className="space-y-8">
             
+            {/* Coming Soon Announcement */}
+            {comingSoonEnabled && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white p-5 rounded-3xl shadow-lg flex flex-col sm:flex-row sm:items-center gap-4"
+              >
+                <div className="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <span className="inline-block bg-white/20 text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full">
+                    Annonce
+                  </span>
+                  <h3 className="text-lg font-display font-bold tracking-tight">
+                    Formation bientôt disponible
+                  </h3>
+                  <p className="text-xs text-white/85 leading-relaxed">
+                    {comingSoonMessage || "Une nouvelle formation est en préparation. Restez connecté, elle arrive très prochainement sur votre espace."}
+                  </p>
+                </div>
+                {comingSoonDate && (
+                  <div className="bg-white/15 rounded-2xl px-4 py-3 text-center flex-shrink-0">
+                    <span className="flex items-center justify-center gap-1.5 text-[9px] uppercase tracking-widest font-mono text-white/80">
+                      <Clock className="w-3 h-3" /> Disponible le
+                    </span>
+                    <span className="block text-sm font-bold mt-1">
+                      {new Date(comingSoonDate + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+                    </span>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
             {/* Upper Dashboard Banner */}
             <div className="bg-white border border-slate-200 p-6 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
               <div className="space-y-1">
