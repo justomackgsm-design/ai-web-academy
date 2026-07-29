@@ -250,6 +250,17 @@ export default function App() {
   const [isPromoActive, setIsPromoActive] = useState<boolean>(true);
   const [originalPrice, setOriginalPrice] = useState<number>(100);
   const [promoPrice, setPromoPrice] = useState<number>(50);
+  // Messagerie professionnelle (emails automatiques)
+  const [smtpHost, setSmtpHost] = useState<string>("");
+  const [smtpPort, setSmtpPort] = useState<number>(587);
+  const [smtpSecure, setSmtpSecure] = useState<boolean>(false);
+  const [smtpUser, setSmtpUser] = useState<string>("");
+  const [smtpPassword, setSmtpPassword] = useState<string>("");
+  const [senderName, setSenderName] = useState<string>("");
+  const [senderEmail, setSenderEmail] = useState<string>("");
+  const [testEmailTarget, setTestEmailTarget] = useState<string>("");
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState<boolean>(false);
+  const [testEmailFeedback, setTestEmailFeedback] = useState<string>("");
   const [telegramLink, setTelegramLink] = useState<string>("");
   const [whatsappLink, setWhatsappLink] = useState<string>("");
   const [presentationVideoUrl, setPresentationVideoUrl] = useState<string>("");
@@ -477,6 +488,33 @@ export default function App() {
     }
   };
 
+  // Envoi d'un email de test depuis l'interface administrateur
+  const handleSendTestEmail = async () => {
+    setTestEmailFeedback("");
+    if (!testEmailTarget.trim()) {
+      setTestEmailFeedback("Veuillez saisir une adresse email de test.");
+      return;
+    }
+    setIsSendingTestEmail(true);
+    const password = localStorage.getItem("ai_web_academy_admin_pass") || "";
+    try {
+      const res = await fetch("/api/admin/test-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password
+        },
+        body: JSON.stringify({ to: testEmailTarget.trim() })
+      });
+      const data = await res.json();
+      setTestEmailFeedback(res.ok ? (data.message || "Email de test envoyé !") : (data.error || "Envoi impossible."));
+    } catch (e) {
+      setTestEmailFeedback("Erreur de connexion au serveur.");
+    } finally {
+      setIsSendingTestEmail(false);
+    }
+  };
+
   // Save Moneroo settings from the admin settings tab
   const handleSaveMonerooSettings = async () => {
     setIsSavingMoneroo(true);
@@ -502,7 +540,17 @@ export default function App() {
           comingSoonMessage,
           exchangeRateApiKey,
           paymentAmount,
-          paymentCurrency
+          paymentCurrency,
+          originalPrice,
+          promoPrice,
+          isPromoActive,
+          smtpHost,
+          smtpPort,
+          smtpSecure,
+          smtpUser,
+          smtpPassword,
+          senderName,
+          senderEmail
         })
       });
       const data = await res.json();
@@ -802,6 +850,16 @@ export default function App() {
         if (data.comingSoonDate !== undefined) setComingSoonDate(data.comingSoonDate || "");
         if (data.comingSoonMessage !== undefined) setComingSoonMessage(data.comingSoonMessage || "");
         if (data.exchangeRateApiKey) setExchangeRateApiKey(data.exchangeRateApiKey);
+        if (data.originalPrice !== undefined) setOriginalPrice(Number(data.originalPrice));
+        if (data.promoPrice !== undefined) setPromoPrice(Number(data.promoPrice));
+        if (data.isPromoActive !== undefined) setIsPromoActive(Boolean(data.isPromoActive));
+        if (data.smtpHost !== undefined) setSmtpHost(data.smtpHost || "");
+        if (data.smtpPort !== undefined) setSmtpPort(Number(data.smtpPort) || 587);
+        if (data.smtpSecure !== undefined) setSmtpSecure(Boolean(data.smtpSecure));
+        if (data.smtpUser !== undefined) setSmtpUser(data.smtpUser || "");
+        if (data.smtpPassword !== undefined) setSmtpPassword(data.smtpPassword || "");
+        if (data.senderName !== undefined) setSenderName(data.senderName || "");
+        if (data.senderEmail !== undefined) setSenderEmail(data.senderEmail || "");
         localStorage.setItem("ai_web_academy_admin_pass", trimmedPass);
         setIsAdminAuthenticated(true);
       } else {
@@ -2723,6 +2781,167 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* ══ Tarification affichée sur la page d'accueil ══ */}
+                        <div className="border-t border-slate-100 pt-4">
+                          <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+                            Tarification affichée sur la page d'accueil
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                                Montant barré (ancien prix)
+                              </label>
+                              <input
+                                type="number"
+                                value={originalPrice}
+                                onChange={(e) => setOriginalPrice(parseFloat(e.target.value) || 0)}
+                                placeholder="100"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                              />
+                              <p className="text-[10px] text-slate-400 mt-1">Affiché barré à côté du prix promotionnel.</p>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                                Montant en promotion (prix actuel)
+                              </label>
+                              <input
+                                type="number"
+                                value={promoPrice}
+                                onChange={(e) => setPromoPrice(parseFloat(e.target.value) || 0)}
+                                placeholder="50"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                              />
+                              <p className="text-[10px] text-slate-400 mt-1">Prix mis en avant lorsque la promotion est active.</p>
+                            </div>
+                          </div>
+                          <label className="mt-3 flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isPromoActive}
+                              onChange={(e) => setIsPromoActive(e.target.checked)}
+                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-xs text-slate-600 font-medium">
+                              Activer la promotion (affiche le prix barré + le prix promotionnel sur l'accueil)
+                            </span>
+                          </label>
+                          <p className="text-[10px] text-slate-400 mt-2">
+                            Après enregistrement, la page d'accueil est mise à jour automatiquement.
+                          </p>
+                        </div>
+
+                        {/* ══ Messagerie professionnelle ══ */}
+                        <div className="border-t border-slate-100 pt-4">
+                          <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
+                            Messagerie professionnelle (emails automatiques)
+                          </h4>
+                          <p className="text-[10px] text-slate-400 mb-3">
+                            Dès qu'un paiement est validé, l'étudiant reçoit automatiquement un email de félicitations
+                            contenant son code de suivi de formation, l'avertissement anti-partage et son code de parrainage.
+                          </p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Serveur SMTP</label>
+                              <input
+                                type="text"
+                                value={smtpHost}
+                                onChange={(e) => setSmtpHost(e.target.value)}
+                                placeholder="smtp.hostinger.com"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Port SMTP</label>
+                              <input
+                                type="number"
+                                value={smtpPort}
+                                onChange={(e) => setSmtpPort(parseInt(e.target.value) || 0)}
+                                placeholder="587"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Identifiant (email complet)</label>
+                              <input
+                                type="text"
+                                value={smtpUser}
+                                onChange={(e) => setSmtpUser(e.target.value)}
+                                placeholder="contact@votredomaine.com"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Mot de passe / mot de passe d'application</label>
+                              <input
+                                type="password"
+                                value={smtpPassword}
+                                onChange={(e) => setSmtpPassword(e.target.value)}
+                                placeholder="••••••••"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Nom de l'expéditeur</label>
+                              <input
+                                type="text"
+                                value={senderName}
+                                onChange={(e) => setSenderName(e.target.value)}
+                                placeholder="AI Web Academy"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Email expéditeur (From)</label>
+                              <input
+                                type="text"
+                                value={senderEmail}
+                                onChange={(e) => setSenderEmail(e.target.value)}
+                                placeholder="contact@votredomaine.com"
+                                className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          <label className="mt-3 flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={smtpSecure}
+                              onChange={(e) => setSmtpSecure(e.target.checked)}
+                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-xs text-slate-600 font-medium">
+                              Connexion SSL/TLS directe (à cocher pour le port 465, à décocher pour le port 587)
+                            </span>
+                          </label>
+
+                          <div className="mt-4 bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Tester la configuration</label>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                type="text"
+                                value={testEmailTarget}
+                                onChange={(e) => setTestEmailTarget(e.target.value)}
+                                placeholder="votre@email.com"
+                                className="flex-1 bg-white border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleSendTestEmail}
+                                disabled={isSendingTestEmail}
+                                className="bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all"
+                              >
+                                {isSendingTestEmail ? "Envoi..." : "Envoyer un email de test"}
+                              </button>
+                            </div>
+                            {testEmailFeedback && (
+                              <p className="text-[11px] text-slate-600">{testEmailFeedback}</p>
+                            )}
+                            <p className="text-[10px] text-slate-400">
+                              Enregistrez d'abord la configuration, puis envoyez un email de test pour vérifier qu'elle fonctionne.
+                            </p>
+                          </div>
+                        </div>
+
                         <div className="border-t border-slate-100 pt-4">
                           <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">
                             Clé API de Conversion Devises (ExchangeRate-API)
@@ -3858,7 +4077,8 @@ export default function App() {
                 <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100 text-left text-[11px] text-indigo-950 leading-relaxed space-y-1">
                   <span className="font-bold text-indigo-700">Instructions importantes :</span>
                   <p>1. Copiez ce code et collez-le dans le champ "Entrer dans la Formation" de l'accueil.</p>
-                  <p>2. Il est maintenant prêt à être lié à cet appareil (<span className="font-mono text-indigo-600">{deviceId}</span>). Gardez-le précieusement !</p>
+                  <p>2. <span className="font-bold text-indigo-700">Protection anti-partage :</span> ce code se verrouillera automatiquement sur le premier appareil (téléphone ou ordinateur) utilisé pour l'activer. Il ne fonctionnera sur aucun autre appareil.</p>
+                  <p>3. Ne le partagez avec personne : tout partage entraîne la perte définitive de votre accès. Gardez-le précieusement !</p>
                 </div>
 
                 <button
