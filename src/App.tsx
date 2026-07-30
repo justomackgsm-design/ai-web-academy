@@ -3964,6 +3964,22 @@ export default function App() {
                       required
                     />
                   </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                      Code de parrainage <span className="text-slate-400 normal-case font-normal">(facultatif)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={referralCodeUsed}
+                      onChange={(e) => setReferralCodeUsed(e.target.value.toUpperCase().trim())}
+                      placeholder="Ex : PARRAIN-XXXX"
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none uppercase"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Vous avez été parrainé ? Saisissez le code de votre parrain : il recevra 5 $ une fois votre paiement validé.
+                    </p>
+                  </div>
                 </div>
 
                 <button
